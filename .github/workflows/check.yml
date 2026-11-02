@@ -23,9 +23,10 @@ jobs:
       - name: Install Dependencies
         run: pip install requests
 
-      - name: Run Script
+     - name: Run Script
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: python main.py
 
       - name: Commit Last IDs
