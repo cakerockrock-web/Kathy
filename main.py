@@ -7,7 +7,6 @@ from datetime import datetime, timezone, timedelta
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
-# ดึงเลขห้องคูปองมาใช้งาน
 CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
 STORAGE_FILE = "last_ids.json"
 
@@ -68,9 +67,18 @@ def parse_html_to_sections(raw_html):
 
 def extract_coupon_data(text):
     coupon_code = "N/A"
-    code_match = re.search(r'([A-Z0-9]{6,20})', text)
-    if code_match:
-        coupon_code = code_match.group(1)
+    
+    # 1. พยายามหาบรรทัดที่อยู่ใต้คำว่า 쿠폰 코드 (Coupon Code)
+    match = re.search(r'쿠폰\s*(?:코드|번호)[^\n]*\n+([^\n]+)', text)
+    if match:
+        coupon_code = match.group(1).replace('◆', '').replace('◇', '').strip()
+    
+    # 2. ถ้าหาไม่เจอ ให้ใช้ไม้ตายเดิม คืองมหาภาษาอังกฤษตัวพิมพ์ใหญ่
+    if coupon_code == "N/A" or not coupon_code:
+        code_match = re.search(r'([A-Z0-9]{6,20})', text)
+        if code_match:
+            coupon_code = code_match.group(1)
+            
     return coupon_code, text
 
 def fetch_feed_detail(feed_id):
@@ -91,7 +99,6 @@ def fetch_lounge_feeds(board_id):
     except: pass
     return []
 
-# เพิ่มตัวแปร target_channel เพื่อให้ระบุปลายทางได้
 def send_to_discord_bot(payload, target_channel):
     if not target_channel:
         print("Error: Target channel ID is empty!", flush=True)
@@ -132,7 +139,6 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     if thumb_url: embed["image"] = {"url": thumb_url}
     
     payload = {"embeds": [embed]}
-    # ส่งไปห้องคูปอง
     send_to_discord_bot(payload, target_channel)
 
 def send_to_discord(feed_summary, category):
@@ -146,15 +152,11 @@ def send_to_discord(feed_summary, category):
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # --- เลี้ยวขวา! ถ้าเป็นคูปอง ให้ส่งไปห้องคูปอง ---
     if "쿠폰" in title:
-        print(f"Coupon detected! Routing to Coupon Channel.", flush=True)
-        # ถ้าไม่ได้ตั้ง CHANNEL_ID_COUPON ไว้ ให้กันเหนียวส่งไปห้องหลักแทน
         route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
         send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
         return
 
-    # --- เลี้ยวซ้าย! ถ้าเป็นอัปเดตปกติ ให้ส่งไปห้องหลัก ---
     header_embed = {"title": "트릭컬 리바이브", "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", "color": color}
     if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
 
@@ -178,7 +180,6 @@ def send_to_discord(feed_summary, category):
         if i == 0:
             payload["components"] = [{"type": 1, "components": [{"type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}}]}]
         
-        # ส่งไปห้องหลัก
         send_to_discord_bot(payload, CHANNEL_ID_MAIN)
 
 def run():
@@ -208,8 +209,10 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
-        if saved_id == "0" and len(new_posts) > 0: 
-            new_posts = [new_posts[0]]
+        # เซฟตี้: ถ้าตั้งใจเทส (ใส่ "0") หรือตั้งเลขเก่าเกินไปจนทะลุโควตา ให้ดึงมาแค่โพสต์เดียวเพื่อกันสแปม
+        if saved_id == "0" or len(new_posts) >= 5: 
+            if new_posts:
+                new_posts = [new_posts[0]]
 
         if new_posts:
             for post in reversed(new_posts): 
