@@ -3,29 +3,26 @@ import re
 import html
 import json
 import requests
+from datetime import datetime, timezone, timedelta
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 STORAGE_FILE = "last_ids.json"
 
+# เหลือเฉพาะหมวด Official เท่านั้น
 CATEGORIES = [
     {
-        "board_id": "0",  # หมวดรวมโพสต์สำหรับทดสอบ
-        "name": "🔥 รวมโพสต์ทั้งหมด",
-        "color": 0x9E6649
-    },
-    {
         "board_id": "3",
-        "name": "공지사항 (ประกาศอัปเดต)",
+        "name": "공지사항",
         "color": 0x3498DB
     },
     {
         "board_id": "4",
-        "name": "이벤트 (คูปอง / กิจกรรม)",
+        "name": "이벤트",
         "color": 0xF1C40F
     },
     {
         "board_id": "7",
-        "name": "개발자 노트 (Dev Note)",
+        "name": "개발자 노트",
         "color": 0x9E6649
     }
 ]
@@ -43,11 +40,20 @@ def save_last_ids(data):
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def format_kst_time(timestamp_val):
+    if not timestamp_val:
+        return ""
+    try:
+        kst = timezone(timedelta(hours=9))
+        if isinstance(timestamp_val, (int, float)) or (isinstance(timestamp_val, str) and timestamp_val.isdigit()):
+            dt = datetime.fromtimestamp(int(timestamp_val) / 1000, tz=kst)
+        else:
+            dt = datetime.now(tz=kst)
+        return f"{dt.year}년 {dt.month}월 {dt.day}일 {dt.hour}시 {dt.minute}분"
+    except Exception:
+        return ""
+
 def parse_html_to_sections(raw_html):
-    """
-    แกะ HTML ออกเป็นชิ้น ๆ เรียงตามลำดับจริง
-    จับคู่ (ข้อความแต่ละท่อน + รูปภาพที่อยู่ใต้ท่อนนั้น)
-    """
     if not raw_html:
         return []
 
@@ -62,10 +68,7 @@ def parse_html_to_sections(raw_html):
                 return f"\n\n[[IMG_TOKEN:{img_url}]]\n\n"
         return ""
 
-    # แทนแท็กรูปภาพด้วย Token พิเศษ
     text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
-    
-    # จัดการเว้นวรรคและแท็กข้อความ
     text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/p\s*>', '\n\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/div\s*>', '\n', text, flags=re.IGNORECASE)
@@ -77,14 +80,23 @@ def parse_html_to_sections(raw_html):
     tokens = re.split(r'\[\[IMG_TOKEN:(https?://[^\]]+)\]\]', text)
     sections = []
     
-    # จับคู่ข้อความและรูปภาพทีละคู่ตามลำดับ
-    for i in range(0, len(tokens), 2):
-        txt = tokens[i].strip()
-        img = tokens[i+1].strip() if i+1 < len(tokens) else None
+    first_text = tokens[0].strip()
+    if first_text:
+        sections.append({"text": first_text, "image": None})
+
+    i = 1
+    while i < len(tokens):
+        img_url = tokens[i].strip()
+        following_text = tokens[i+1].strip() if i+1 < len(tokens) else ""
         
-        if txt or img:
-            sections.append({"text": txt, "image": img})
-            
+        if sections and sections[-1]["image"] is None:
+            sections[-1]["image"] = img_url
+            if following_text:
+                sections.append({"text": following_text, "image": None})
+        else:
+            sections.append({"text": following_text, "image": img_url})
+        i += 2
+
     return sections
 
 def fetch_feed_detail(feed_id):
@@ -103,11 +115,7 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    if board_id == "0":
-        api_url = "https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?limit=5&order=NEW"
-    else:
-        api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&limit=5&order=NEW"
-
+    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&limit=5&order=NEW"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -131,27 +139,35 @@ def send_to_discord(feed_summary, category):
     title = target_data.get("title") or "공지사항"
     raw_contents = target_data.get("contents") or ""
     color = category["color"]
+    created_at = target_data.get("created_at") or target_data.get("createdAt")
+    date_str = format_kst_time(created_at)
+
+    thumb_url = None
+    for rep in target_data.get("representations", []):
+        if rep.get("representationType") == "IMAGE" and rep.get("path"):
+            thumb_url = rep.get("path")
+            break
 
     embeds = []
 
-    # 1. Embed หัวเรื่อง (ไม่เอาตัวหนา ไม่มีรูปปก)
+    # 1. กล่องหัวเรื่อง + รูปปก Thumbnail ขนาดเล็ก
     header_embed = {
         "title": "트릭컬 리바이브",
-        "description": f"{title}",
-        "color": color,
-        "url": post_url
+        "description": f"**{title}**",
+        "color": color
     }
+    if thumb_url:
+        header_embed["thumbnail"] = {"url": thumb_url}
     embeds.append(header_embed)
 
-    # 2. Embed ปุ่มลิงก์ Naver
-    meta_desc = f"| ID: {feed_id}\n🟢 [네이버 라운지 ↗]({post_url})"
+    # 2. กล่อง Meta Info + ปุ่ม
+    meta_desc = f"{date_str}   |   ID: {feed_id}\n🟢 [네이버 라운지 ↗]({post_url})"
     embeds.append({
         "description": meta_desc,
-        "color": color,
-        "url": post_url
+        "color": color
     })
 
-    # 3. แยกท่อนเนื้อหาและรูปภาพเรียงตามลำดับจริง
+    # 3. แยกท่อนเนื้อหาและรูปภาพ (ไม่มี URL แฝง เพื่อกัน Discord รวมเป็น Grid)
     sections = parse_html_to_sections(raw_contents)
 
     for sec in sections:
@@ -164,8 +180,7 @@ def send_to_discord(feed_summary, category):
         if len(sec_text) > 2000:
             sec_text = sec_text[:2000].rstrip() + "..."
 
-        # การใส่ url: post_url เข้าไปในทุกๆ embed ทำให้ Discord จับรวมรูปภาพที่ติดกันให้เป็นแกลเลอรี
-        emb = {"color": color, "url": post_url}
+        emb = {"color": color}
         if sec_text:
             emb["description"] = sec_text
         if sec_img:
@@ -178,8 +193,7 @@ def send_to_discord(feed_summary, category):
         embeds = embeds[:MAX_TOTAL_EMBEDS]
         embeds.append({
             "description": "[ 컴포넌트 초과로 자세한 내용은 생략합니다 ]",
-            "color": color,
-            "url": post_url
+            "color": color
         })
 
     batch_size = 10
