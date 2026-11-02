@@ -135,7 +135,6 @@ def send_to_discord(feed_summary, category):
     raw_contents = target_data.get("contents") or ""
     color = category["color"]
     
-    # ดักจับเวลาจากหลายๆ ตัวแปร เผื่อ API ของ Naver ส่งมาในชื่ออื่น
     raw_time = target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("writeDate") or target_data.get("timestamp")
     date_str = format_thai_time(raw_time)
 
@@ -145,8 +144,9 @@ def send_to_discord(feed_summary, category):
             thumb_url = rep.get("path")
             break
 
-    embeds = []
-
+    # ==========================================
+    # ส่งข้อความก้อนที่ 1: Header + Date + Button
+    # ==========================================
     header_embed = {
         "title": "트릭컬 리바이브",
         "description": f"**{title}**",
@@ -154,15 +154,41 @@ def send_to_discord(feed_summary, category):
     }
     if thumb_url:
         header_embed["thumbnail"] = {"url": thumb_url}
-    embeds.append(header_embed)
-
-    meta_desc = f"{date_str}   |   ID: {feed_id}\n🟢 [ไปที่ลิงก์ ↗]({post_url})"
-    embeds.append({
-        "description": meta_desc,
+        
+    meta_embed = {
+        "description": f"{date_str}   |   ID: {feed_id}",
         "color": color
-    })
+    }
 
+    # โครงสร้าง UI ปุ่ม Discord (Action Row)
+    payload_header = {
+        "username": "เคธี่นักสอดแนม",
+        "embeds": [header_embed, meta_embed],
+        "components": [
+            {
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 5,
+                        "label": "ไปที่ลิงก์",
+                        "url": post_url,
+                        "emoji": {
+                            "name": "🟢" 
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    requests.post(WEBHOOK_URL, json=payload_header)
+
+
+    # ==========================================
+    # ส่งข้อความก้อนที่ 2: เนื้อหา Sections
+    # ==========================================
     sections = parse_html_to_sections(raw_contents)
+    content_embeds = []
 
     for sec in sections:
         sec_text = sec["text"]
@@ -180,25 +206,25 @@ def send_to_discord(feed_summary, category):
         if sec_img:
             emb["image"] = {"url": sec_img}
 
-        embeds.append(emb)
+        content_embeds.append(emb)
 
     MAX_TOTAL_EMBEDS = 25
-    if len(embeds) > MAX_TOTAL_EMBEDS:
-        embeds = embeds[:MAX_TOTAL_EMBEDS]
-        embeds.append({
+    if len(content_embeds) > MAX_TOTAL_EMBEDS:
+        content_embeds = content_embeds[:MAX_TOTAL_EMBEDS]
+        content_embeds.append({
             "description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]",
             "color": color
         })
 
     batch_size = 10
-    for i in range(0, len(embeds), batch_size):
-        batch = embeds[i:i + batch_size]
-        payload = {
+    for i in range(0, len(content_embeds), batch_size):
+        batch = content_embeds[i:i + batch_size]
+        payload_content = {
             "username": "เคธี่ นักสอดแนม",
             "embeds": batch
         }
-        resp = requests.post(WEBHOOK_URL, json=payload)
-        print(f"Sent batch {i//batch_size + 1} for ID {feed_id} - Status: {resp.status_code}", flush=True)
+        resp = requests.post(WEBHOOK_URL, json=payload_content)
+        print(f"Sent content batch {i//batch_size + 1} for ID {feed_id} - Status: {resp.status_code}", flush=True)
 
 def run():
     if not WEBHOOK_URL:
@@ -230,7 +256,6 @@ def run():
                 break
             new_posts.append(feed)
 
-        # ลอจิกสำหรับทดสอบดึง 1 โพสต์
         if saved_id == "0" and len(new_posts) > 0:
             new_posts = [new_posts[0]]
 
