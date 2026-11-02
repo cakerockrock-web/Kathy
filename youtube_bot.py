@@ -44,6 +44,13 @@ def send_to_discord(payload, target_channel):
     requests.post(url, headers=headers, json=payload)
 
 def run():
+    # บรรทัดเทสชั่วคราว: สั่งให้ส่งข้อความทักทายเข้าห้อง Discord ทันทีที่รัน
+    test_channel = "ใส่_ID_ห้อง_Discord_สักห้องหนึ่ง_ตรงนี้"
+    payload_test = {
+        "content": "👋 ฮัลโหล! บอท YouTube ตื่นมารายงานตัว ระบบทำงานปกติครับท่านเจ้าลัทธิ!"
+    }
+    
+    send_to_discord(payload_test, test_channel)
     if not BOT_TOKEN:
         print("Missing BOT_TOKEN", flush=True)
         return
