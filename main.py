@@ -34,7 +34,6 @@ def format_thai_time(timestamp_val):
         dt = datetime.fromtimestamp(int(timestamp_val) / 1000, tz=kst)
     else:
         dt = datetime.now(tz=kst)
-        
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     return f"{dt.day} {thai_months[dt.month-1]} {dt.year} {dt.hour:02d}:{dt.minute:02d} น."
 
@@ -65,6 +64,15 @@ def parse_html_to_sections(raw_html):
         if txt or img: sections.append({"text": txt, "image": img})
     return sections
 
+def extract_coupon_data(text):
+    # พยายามงมหารหัสคูปอง (ตัวอักษรภาษาอังกฤษ+ตัวเลข พิมพ์ใหญ่ติดกัน 6 ตัวขึ้นไป)
+    coupon_code = "N/A"
+    code_match = re.search(r'([A-Z0-9]{6,20})', text)
+    if code_match:
+        coupon_code = code_match.group(1)
+    
+    return coupon_code, text
+
 def fetch_feed_detail(feed_id):
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"}
@@ -92,6 +100,58 @@ def send_to_discord_bot(payload):
     resp = requests.post(url, headers=headers, json=payload)
     return resp.status_code
 
+# ฟังก์ชันแยก: เลย์เอาต์คูปอง
+def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str):
+    raw_contents = target_data.get("contents") or ""
+    sections = parse_html_to_sections(raw_contents)
+    
+    full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
+    coupon_code, text_content = extract_coupon_data(full_text)
+    
+    if len(text_content) > 1000:
+        text_content = text_content[:1000] + "..."
+
+    embed = {
+        "author": {
+            "name": "Trickcal RE:VIVE KR - Coupon",
+            "icon_url": "https://play-lh.googleusercontent.com/yS421eZOPqW61QeG0eOik_7XmGj7-f4xS5G1Lpsx9m1j4Sg2u0qP5-i1_98rS6zQyA=w240-h480-rw"
+        },
+        "title": target_data.get("title") or "쿠폰 안내",
+        "color": 0x9B59B6, # สีม่วงแบบห้องคูปอง
+        "fields": [
+            {
+                "name": "Coupon Code",
+                "value": f"`{coupon_code}`",
+                "inline": False
+            },
+            {
+                "name": "Coupon Reward / Details",
+                "value": f"```\n{text_content}\n```",
+                "inline": False
+            },
+            {
+                "name": "Coupon Claim Period",
+                "value": date_str,
+                "inline": False
+            },
+            {
+                "name": "Coupon Claim Method",
+                "value": f"[Ingame or Click Here]({post_url})",
+                "inline": False
+            }
+        ],
+        "footer": {
+            "text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"
+        }
+    }
+    
+    if thumb_url:
+        embed["image"] = {"url": thumb_url}
+        
+    payload = {"embeds": [embed]}
+    send_to_discord_bot(payload)
+
+# ฟังก์ชันหลัก: ตัดสินใจว่าจะใช้เลย์เอาต์ไหน
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
@@ -101,44 +161,38 @@ def send_to_discord(feed_summary, category):
     raw_contents = target_data.get("contents") or ""
     color = category["color"]
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
-
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # 1. ข้อความท่อนแรก: หัวเรื่อง + วันที่ + ปุ่มกด
-    header_embed = {
-        "title": "트릭컬 리바이브", 
-        "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
-        "color": color
-    }
+    # --- เช็กว่าเป็นโพสต์คูปองหรือไม่? ---
+    if "쿠폰" in title:
+        print(f"Coupon detected! Routing ID {feed_id} to Coupon Layout.", flush=True)
+        send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str)
+        return
+
+    # ถ้าไม่ใช่คูปอง ให้ใช้หน้าต่างปกติ (ติดกันเป็นแพ็กเดียว)
+    header_embed = {"title": "트릭컬 리바이브", "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", "color": color}
     if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
 
-    payload_header = {
-        "embeds": [header_embed],
-        "components": [{
-            "type": 1,
-            "components": [{
-                "type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}
-            }]
-        }]
-    }
-    send_to_discord_bot(payload_header)
-
-    # 2. ข้อความท่อนสอง: เนื้อหาที่ติดกันเป็นแพ็กเดียว
+    all_embeds = [header_embed]
     sections = parse_html_to_sections(raw_contents)
-    content_embeds = []
     for sec in sections:
         sec_text = sec["text"][:2000].rstrip() + "..." if len(sec["text"]) > 2000 else sec["text"]
         emb = {"color": color}
         if sec_text: emb["description"] = sec_text
         if sec["image"]: emb["image"] = {"url": sec["image"]}
-        if emb.get("description") or emb.get("image"): content_embeds.append(emb)
+        if emb.get("description") or emb.get("image"): all_embeds.append(emb)
+
+    if len(all_embeds) > 25:
+        all_embeds = all_embeds[:24]
+        all_embeds.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
 
     MAX_EMBEDS = 10 
-    for i in range(0, len(content_embeds), MAX_EMBEDS):
-        batch = content_embeds[i:i + MAX_EMBEDS]
-        if i + MAX_EMBEDS >= len(content_embeds) and len(content_embeds) > 25:
-            batch.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
-        send_to_discord_bot({"embeds": batch})
+    for i in range(0, len(all_embeds), MAX_EMBEDS):
+        batch = all_embeds[i:i + MAX_EMBEDS]
+        payload = {"embeds": batch}
+        if i == 0:
+            payload["components"] = [{"type": 1, "components": [{"type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}}]}]
+        send_to_discord_bot(payload)
 
 def run():
     if not BOT_TOKEN or not CHANNEL_ID:
@@ -164,11 +218,9 @@ def run():
         new_posts = []
         for feed in feeds:
             f_id = str(feed.get("feedId"))
-            if f_id == saved_id:
-                break
+            if f_id == saved_id: break
             new_posts.append(feed)
 
-        # โหมดเทส
         if saved_id == "0" and len(new_posts) > 0: 
             new_posts = [new_posts[0]]
 
