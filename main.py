@@ -96,7 +96,6 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    # ปรับลิมิตกลับมาเป็น 5 โพสต์ กำลังดี ไม่สแปมแชท
     api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
     try:
@@ -126,12 +125,20 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     coupon_code, claim_period = extract_coupon_info(full_text)
     display_period = claim_period if claim_period else f"โพสต์เมื่อ: {date_str}"
 
-    all_images = []
-    if thumb_url:
-        all_images.append(thumb_url)
+    body_images = []
     for sec in sections:
-        if sec.get("image") and sec["image"] not in all_images:
-            all_images.append(sec["image"])
+        if sec.get("image") and sec["image"] not in body_images:
+            body_images.append(sec["image"])
+
+    selected_image = None
+    if len(body_images) >= 3:
+        selected_image = body_images[1]  
+    elif len(body_images) == 2:
+        selected_image = body_images[-1] 
+    elif len(body_images) == 1:
+        selected_image = body_images[0]  
+    elif not body_images and thumb_url:
+        selected_image = thumb_url
 
     embed = {
         "author": {
@@ -146,18 +153,11 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
         "footer": {"text": f"เคธี่น่ารัก 🍬 | ID: {feed_id}"}
     }
     
-    embeds = [embed]
-    
-    if all_images:
-        embed["image"] = {"url": all_images[0]}
-        for img_url in all_images[1:10]:
-            embeds.append({
-                "color": 0x9B59B6,
-                "image": {"url": img_url}
-            })
+    if selected_image:
+        embed["image"] = {"url": selected_image}
     
     payload = {
-        "embeds": embeds,
+        "embeds": [embed],
         "components": [{
             "type": 1,
             "components": [{
@@ -251,8 +251,10 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
+        if saved_id == "0" and new_posts: 
+            new_posts = [new_posts[0]]
+
         if new_posts:
-            # ดึงมาสูงสุด 5 โพสต์ตามที่รับมาจาก API แล้วส่งเรียงคิวจากเก่าไปใหม่
             for post in reversed(new_posts): 
                 send_to_discord(post, cat)
             last_ids[board_id] = latest_id
