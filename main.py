@@ -3,30 +3,31 @@ import re
 import html
 import json
 import requests
+from datetime import datetime, timezone, timedelta
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 STORAGE_FILE = "last_ids.json"
 
 CATEGORIES = [
     {
-        "board_id": "0",  # หมวดรวมโพสต์สำหรับทดสอบ (เทสเสร็จแล้วลบออกได้)
+        "board_id": "0",  # รวมทุกโพสต์ (ใช้ทดสอบ เทสเสร็จแล้วลบออกได้)
         "name": "🔥 รวมโพสต์ทั้งหมด",
-        "color": 0xE74C3C
+        "color": 0x9E6649
     },
     {
         "board_id": "3",
-        "name": "🛠️ ประกาศอัปเดต",
+        "name": "공지사항 (ประกาศอัปเดต)",
         "color": 0x3498DB
     },
     {
         "board_id": "4",
-        "name": "🎟️ คูปอง / กิจกรรม",
+        "name": "이벤트 (คูปอง / กิจกรรม)",
         "color": 0xF1C40F
     },
     {
         "board_id": "7",
-        "name": "📝 Dev Note",
-        "color": 0x9B59B6
+        "name": "개발자 노트 (Dev Note)",
+        "color": 0x9E6649  # โทนสีน้ำตาลคอปเปอร์แบบในภาพตัวอย่าง
     }
 ]
 
@@ -43,20 +44,74 @@ def save_last_ids(data):
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def clean_html_to_markdown(raw_html):
-    """แปลงแท็ก HTML เป็น Markdown ข้อความอ่านง่ายใน Discord"""
-    if not raw_html:
+def format_kst_time(timestamp_val):
+    """แปลงเวลาให้เป็นรูปแบบเกาหลี: 2026년 11월 2일 17시 0분"""
+    if not timestamp_val:
         return ""
-    text = re.sub(r'<\s*br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
+    try:
+        kst = timezone(timedelta(hours=9))
+        if isinstance(timestamp_val, (int, float)) or (isinstance(timestamp_val, str) and timestamp_val.isdigit()):
+            dt = datetime.fromtimestamp(int(timestamp_val) / 1000, tz=kst)
+        else:
+            dt = datetime.now(tz=kst)
+        return f"{dt.year}년 {dt.month}월 {dt.day}일 {dt.hour}시 {dt.minute}분"
+    except Exception:
+        return ""
+
+def parse_html_to_sections(raw_html):
+    """
+    แกะ HTML ออกเป็นชิ้น ๆ เรียงตามลำดับจริง
+    จับคู่ (ข้อความแต่ละท่อน + รูปภาพที่อยู่ใต้ท่อนนั้น) เพื่อส่งเข้า Embed ทีละช่อง
+    """
+    if not raw_html:
+        return []
+
+    def img_replacer(match):
+        tag = match.group(0)
+        m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+        if m:
+            img_url = m.group(1).strip()
+            if img_url.startswith("//"):
+                img_url = "https:" + img_url
+            if img_url.startswith("http"):
+                return f"\n\n[[IMG_TOKEN:{img_url}]]\n\n"
+        return ""
+
+    # แทนแท็กรูปภาพด้วย Token พิเศษ
+    text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
+    
+    # จัดการเว้นวรรคและแท็กข้อความ
+    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/p\s*>', '\n\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/div\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/h[1-6]\s*>', '\n\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
     text = html.unescape(text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+    tokens = re.split(r'\[\[IMG_TOKEN:(https?://[^\]]+)\]\]', text)
+    sections = []
+    
+    first_text = tokens[0].strip()
+    if first_text:
+        sections.append({"text": first_text, "image": None})
+
+    i = 1
+    while i < len(tokens):
+        img_url = tokens[i].strip()
+        following_text = tokens[i+1].strip() if i+1 < len(tokens) else ""
+        
+        if sections and sections[-1]["image"] is None:
+            sections[-1]["image"] = img_url
+            if following_text:
+                sections.append({"text": following_text, "image": None})
+        else:
+            sections.append({"text": following_text, "image": img_url})
+        i += 2
+
+    return sections
 
 def fetch_feed_detail(feed_id):
-    """ดึงข้อมูลเนื้อหาและไฟล์แนบทั้งหมดจากหน้าโพสต์จริง"""
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -90,44 +145,6 @@ def fetch_lounge_feeds(board_id):
         print(f"Board {board_id} Error: {e}", flush=True)
     return []
 
-def extract_all_media(target_data, raw_contents):
-    """ดึง URL รูปภาพทั้งหมด รวมถึง GIF และไฟล์มีเดียจากทุกช่องทาง"""
-    media_list = []
-
-    def add_url(url):
-        if not url or not isinstance(url, str):
-            return
-        url = url.strip()
-        if url.startswith("//"):
-            url = "https:" + url
-        if url.startswith("http") and url not in media_list:
-            media_list.append(url)
-
-    # 1. ดึงจาก Representations (ไม่จำกัดเฉพาะ IMAGE เพื่อให้ได้ GIF/ATTACHMENT ทั้งหมด)
-    for rep in target_data.get("representations", []):
-        add_url(rep.get("path"))
-        add_url(rep.get("url"))
-
-    # 2. ดึงจากแท็ก <img> ครอบคลุมทั้ง src, data-src และ data-original (รองรับ Lazy Load)
-    img_tag_urls = re.findall(
-        r'<img[^>]+(?:src|data-src|data-original)=["\']([^"\']+)["\']',
-        raw_contents,
-        flags=re.IGNORECASE
-    )
-    for u in img_tag_urls:
-        add_url(u)
-
-    # 3. ดึงลิงก์ไฟล์รูปภาพ/GIF ที่อาจซ่อนอยู่ในเนื้อหา หรือแท็กอื่นๆ
-    file_urls = re.findall(
-        r'https?://[^\s"\'<>]+\.(?:gif|png|jpe?g|webp)(?:\?[^\s"\'<>]*)?',
-        raw_contents,
-        flags=re.IGNORECASE
-    )
-    for u in file_urls:
-        add_url(u)
-
-    return media_list
-
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
@@ -135,70 +152,78 @@ def send_to_discord(feed_summary, category):
     full_detail = fetch_feed_detail(feed_id)
     target_data = full_detail if full_detail else feed_summary
 
-    title = target_data.get("title") or "ประกาศใหม่จาก Trickcal"
-    if len(title) > 250:
-        title = title[:247] + "..."
-
+    title = target_data.get("title") or "공지사항"
     raw_contents = target_data.get("contents") or ""
-    clean_desc = clean_html_to_markdown(raw_contents)
+    color = category["color"]
+    created_at = target_data.get("created_at") or target_data.get("createdAt")
+    date_str = format_kst_time(created_at)
 
-    if len(clean_desc) > 2000:
-        clean_desc = clean_desc[:2000].rstrip() + f"\n\n... *(เนื้อหายาวเกินกำหนด [อ่านฉบับเต็มบนเว็บ]({post_url}))*"
+    # ดึงรูปภาพแรกสุดมาทำ Thumbnail หัวข้อ
+    thumb_url = None
+    for rep in target_data.get("representations", []):
+        if rep.get("representationType") == "IMAGE" and rep.get("path"):
+            thumb_url = rep.get("path")
+            break
 
-    if not clean_desc:
-        clean_desc = f"มีประกาศใหม่ในหมวด **{category['name']}**\n[คลิกเพื่อดูรายละเอียด]({post_url})"
+    embeds = []
 
-    all_media = extract_all_media(target_data, raw_contents)
+    # 1. Embed หัวเรื่อง
+    header_embed = {
+        "title": "트릭컬 리바이브",
+        "description": f"**{title}**",
+        "color": color
+    }
+    if thumb_url:
+        header_embed["thumbnail"] = {"url": thumb_url}
+    embeds.append(header_embed)
 
-    # Discord กำหนดให้ 1 ข้อความส่ง Embed ได้สูงสุด 10 รูป
-    # เราจะแบ่งส่งรูปเป็นชุด ๆ ละไม่เกิน 10 รูป เพื่อให้แสดงรูปและ GIF ได้ครบทั้งหมด
+    # 2. Embed วันที่และลิงก์
+    meta_desc = f"{date_str}   |   ID: {feed_id}\n[🟢 네이버 라운지 ↗]({post_url})"
+    embeds.append({
+        "description": meta_desc,
+        "color": color
+    })
+
+    # 3. แยกท่อนเนื้อหาและรูปภาพเรียงตามลำดับจริง
+    sections = parse_html_to_sections(raw_contents)
+
+    for sec in sections:
+        sec_text = sec["text"]
+        sec_img = sec["image"]
+
+        if not sec_text and not sec_img:
+            continue
+
+        if len(sec_text) > 2000:
+            sec_text = sec_text[:2000].rstrip() + "..."
+
+        emb = {"color": color}
+        if sec_text:
+            emb["description"] = sec_text
+        if sec_img:
+            emb["image"] = {"url": sec_img}
+
+        embeds.append(emb)
+
+    # Discord กำหนดให้ 1 ข้อความส่งได้สูงสุด 10 Embeds
+    # เราจะส่งเป็นชุด ๆ ละไม่เกิน 10 Embeds ต่อกันเพื่อความลื่นไหล
+    MAX_TOTAL_EMBEDS = 25  # ส่งได้สูงสุดประมาณ 3 ข้อความต่อกัน
+    if len(embeds) > MAX_TOTAL_EMBEDS:
+        embeds = embeds[:MAX_TOTAL_EMBEDS]
+        embeds.append({
+            "description": "[ 컴포넌트 초과로 자세한 내용은 생략합니다 ]",
+            "color": color
+        })
+
     batch_size = 10
-    total_images = len(all_media)
-
-    if total_images == 0:
-        # กรณีไม่มีรูปภาพเลย
+    for i in range(0, len(embeds), batch_size):
+        batch = embeds[i:i + batch_size]
         payload = {
             "username": "Trickcal Notifier",
-            "embeds": [{
-                "title": f"📢 {title}",
-                "url": post_url,
-                "description": clean_desc,
-                "color": category["color"],
-                "footer": {"text": f"Naver Lounge • {category['name']}"}
-            }]
+            "embeds": batch
         }
-        requests.post(WEBHOOK_URL, json=payload)
-    else:
-        # กรณีมีรูป/GIF: ส่งข้อความแรกพร้อมเนื้อหา + รูปชุดแรก
-        first_batch = all_media[:batch_size]
-        first_embeds = [{
-            "title": f"📢 {title}",
-            "url": post_url,
-            "description": clean_desc,
-            "color": category["color"],
-            "image": {"url": first_batch[0]},
-            "footer": {"text": f"Naver Lounge • {category['name']} (รวมมีเดียทั้งหมด {total_images} ไฟล์)"}
-        }]
-        for extra_img in first_batch[1:]:
-            first_embeds.append({
-                "url": post_url,
-                "image": {"url": extra_img}
-            })
-
-        requests.post(WEBHOOK_URL, json={"username": "Trickcal Notifier", "embeds": first_embeds})
-
-        # หากมีรูป/GIF เกิน 10 ไฟล์ ระบบจะยิงข้อความตามมาเก็บตกรูปที่เหลือให้ครบ ไม่ทิ้งแม้แต่รูปเดียว
-        for i in range(batch_size, total_images, batch_size):
-            remaining_batch = all_media[i:i + batch_size]
-            followup_embeds = []
-            for img in remaining_batch:
-                followup_embeds.append({
-                    "url": post_url,
-                    "image": {"url": img}
-                })
-            requests.post(WEBHOOK_URL, json={"username": "Trickcal Notifier", "embeds": followup_embeds})
-
-    print(f"Sent post {feed_id} to Discord with {total_images} media items.", flush=True)
+        resp = requests.post(WEBHOOK_URL, json=payload)
+        print(f"Sent batch {i//batch_size + 1} - Status: {resp.status_code}", flush=True)
 
 def run():
     if not WEBHOOK_URL:
@@ -243,4 +268,4 @@ def run():
         save_last_ids(last_ids)
 
 if __name__ == "__main__":
-    run() 
+    run()
