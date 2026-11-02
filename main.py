@@ -64,37 +64,40 @@ def parse_html_to_sections(raw_html):
             if img_url.startswith("//"):
                 img_url = "https:" + img_url
             if img_url.startswith("http"):
-                return f"\n\n[[IMG_TOKEN:{img_url}]]\n\n"
+                return f"[[IMG_TOKEN:{img_url}]]"
         return ""
 
+    # 1. จัดการรูปภาพ (ไม่เว้นบรรทัด \n\n ทิ้งไว้แล้ว เพื่อลดช่องว่าง)
     text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
+    
+    # 2. ปรับการขึ้นบรรทัดใหม่ให้ชิดกันมากขึ้น (</p> และ <br> ให้เป็นแค่ \n เดียว)
     text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/p\s*>', '\n\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/div\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/h[1-6]\s*>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/(?:p|div|h[1-6]|tr|li|ul|ol)\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/(?:td|th)\s*>', ' ', text, flags=re.IGNORECASE)
+    
+    # 3. ลบแท็ก HTML ที่เหลือทั้งหมด
     text = re.sub(r'<[^>]+>', '', text)
     text = html.unescape(text)
-    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    
+    # 4. กำจัด "ช่องว่างผี" (Non-breaking & Zero-width space) ที่ทำให้ Discord เว้นบรรทัดห่าง
+    text = text.replace("\xa0", " ").replace("\u200b", "")
+    
+    # 5. ยุบช่องว่างและบรรทัดที่ซ้อนกันเยอะเกินไป ให้เหลือช่องว่างและบรรทัดว่างสูงสุดแค่ 1 บรรทัด
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', text)
+    text = text.strip()
 
     tokens = re.split(r'\[\[IMG_TOKEN:(https?://[^\]]+)\]\]', text)
     sections = []
     
-    first_text = tokens[0].strip()
-    if first_text:
-        sections.append({"text": first_text, "image": None})
-
-    i = 1
-    while i < len(tokens):
-        img_url = tokens[i].strip()
-        following_text = tokens[i+1].strip() if i+1 < len(tokens) else ""
+    for i in range(0, len(tokens), 2):
+        txt = tokens[i].strip()
+        # ทำความสะอาดส่วนปลายทางอีกรอบเพื่อความชัวร์
+        txt = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', txt)
+        img = tokens[i+1].strip() if i+1 < len(tokens) else None
         
-        if sections and sections[-1]["image"] is None:
-            sections[-1]["image"] = img_url
-            if following_text:
-                sections.append({"text": following_text, "image": None})
-        else:
-            sections.append({"text": following_text, "image": img_url})
-        i += 2
+        if txt or img:
+            sections.append({"text": txt, "image": img})
 
     return sections
 
@@ -114,7 +117,6 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    # ปรับ URL ใหม่ให้ตรงกับสเปกของ Naver เป๊ะๆ ป้องกันบอทโดนเด้ง
     api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -125,8 +127,6 @@ def fetch_lounge_feeds(board_id):
         res = requests.get(api_url, headers=headers, timeout=10)
         if res.status_code == 200:
             return res.json().get("content", {}).get("feeds", [])
-        else:
-            print(f"Board {board_id} Failed: HTTP {res.status_code}", flush=True)
     except Exception as e:
         print(f"Board {board_id} Error: {e}", flush=True)
     return []
@@ -215,10 +215,8 @@ def run():
 
     for cat in CATEGORIES:
         board_id = cat["board_id"]
-        print(f"--- Checking Board {board_id} ---", flush=True)
         feeds = fetch_lounge_feeds(board_id)
         if not feeds:
-            print(f"Board {board_id}: No feeds returned. API limit or Empty.", flush=True)
             continue
 
         saved_id = str(last_ids.get(board_id, ""))
@@ -238,17 +236,16 @@ def run():
             new_posts.append(feed)
 
         if new_posts:
-            print(f"Board {board_id}: Found {len(new_posts)} new posts. Sending to Discord...", flush=True)
+            print(f"Board {board_id}: Found {len(new_posts)} new posts. Sending...", flush=True)
             for post in reversed(new_posts):
                 send_to_discord(post, cat)
             last_ids[board_id] = latest_id
             updated = True
         else:
-            print(f"Board {board_id}: Up to date (Latest: {latest_id})", flush=True)
+            print(f"Board {board_id}: Up to date", flush=True)
 
     if updated:
         save_last_ids(last_ids)
-        print("Saved new IDs to last_ids.json", flush=True)
 
 if __name__ == "__main__":
     run()
