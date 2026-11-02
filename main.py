@@ -12,7 +12,7 @@ STORAGE_FILE = "last_ids.json"
 
 CATEGORIES = [
     {"board_id": "8", "name": "공지사항 (ประกาศอัปเดต)", "color": 0x3498DB},
-    {"board_id": "11", "name": "이벤트 (คูปอง / กิจกรรม)", "color": 0xF1C40F},
+    {"board_id": "11", "name": "이벤트 (คูปอง /กิจกรรม)", "color": 0xF1C40F},
     {"board_id": "31", "name": "개발자 노트 (Dev Note)", "color": 0x9E6649}
 ]
 
@@ -65,20 +65,18 @@ def parse_html_to_sections(raw_html):
         if txt or img: sections.append({"text": txt, "image": img})
     return sections
 
-def extract_coupon_data(text):
+def extract_coupon_code(text):
     coupon_code = "N/A"
-    
-    # ดักจับหัวข้อ 쿠폰 코드 (มีอักขระพิเศษรอบๆ ได้) แล้วดึงบรรทัดที่มีข้อความบรรทัดถัดไป
     match = re.search(r'쿠폰\s*코드[^\n]*\n+([^\n]+)', text)
     if match:
-        coupon_code = match.group(1).strip()
+        coupon_code = match.group(1).replace('◆', '').replace('◇', '').strip()
         
     if coupon_code == "N/A" or not coupon_code:
         code_match = re.search(r'([A-Z0-9]{6,20})', text)
         if code_match:
             coupon_code = code_match.group(1)
             
-    return coupon_code, text
+    return coupon_code
 
 def fetch_feed_detail(feed_id):
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
@@ -111,14 +109,16 @@ def send_to_discord_bot(payload, target_channel):
     resp = requests.post(url, headers=headers, json=payload)
     return resp.status_code
 
+# ==========================================
+# 1. เลย์เอาต์คูปอง (เอา Reward ออก เน้นรูป/GIF)
+# ==========================================
 def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, target_channel):
     raw_contents = target_data.get("contents") or ""
     sections = parse_html_to_sections(raw_contents)
     full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
-    coupon_code, text_content = extract_coupon_data(full_text)
     
-    if len(text_content) > 1000:
-        text_content = text_content[:1000] + "..."
+    # ดึงแค่รหัสคูปองอย่างเดียว
+    coupon_code = extract_coupon_code(full_text)
 
     embed = {
         "author": {
@@ -129,15 +129,15 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
         "color": 0x9B59B6,
         "fields": [
             {"name": "Coupon Code", "value": f"`{coupon_code}`", "inline": False},
-            {"name": "Coupon Reward / Details", "value": f"```\n{text_content}\n```", "inline": False},
             {"name": "Coupon Claim Period", "value": date_str, "inline": False}
-            # ตัดช่อง Method แบบเก่าทิ้งไป เพราะเราจะใช้ปุ่มกดแล้ว
         ],
         "footer": {"text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"}
     }
-    if thumb_url: embed["image"] = {"url": thumb_url}
     
-    # เพิ่มปุ่ม UI ของแท้ไปที่ก้อนคูปอง
+    # ดึงรูปภาพหรือ GIF มาแสดงเต็มๆ แบบคลีนๆ
+    if thumb_url: 
+        embed["image"] = {"url": thumb_url}
+    
     payload = {
         "embeds": [embed],
         "components": [{
@@ -153,6 +153,9 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     }
     send_to_discord_bot(payload, target_channel)
 
+# ==========================================
+# 2. เลย์เอาต์ประกาศทั่วไป (ดึงปุ่มกลับมาไว้บนสุด)
+# ==========================================
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
@@ -164,35 +167,50 @@ def send_to_discord(feed_summary, category):
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
+    # เลี้ยวไปห้องคูปอง
     if "쿠폰" in title:
         route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
         send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
         return
 
-    header_embed = {"title": "트릭컬 리바이브", "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", "color": color}
+    # ก้อนที่ 1: หัวเรื่อง + ปุ่มกด (ล็อคปุ่มไว้ด้านบนสุด)
+    header_embed = {
+        "title": "트릭컬 리바이브", 
+        "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
+        "color": color
+    }
     if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
 
-    all_embeds = [header_embed]
+    payload_header = {
+        "embeds": [header_embed],
+        "components": [{
+            "type": 1,
+            "components": [{
+                "type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}
+            }]
+        }]
+    }
+    send_to_discord_bot(payload_header, CHANNEL_ID_MAIN)
+
+    # ก้อนที่ 2: เนื้อหาทั้งหมดเรียงต่อกัน
     sections = parse_html_to_sections(raw_contents)
+    content_embeds = []
+    
     for sec in sections:
         sec_text = sec["text"][:2000].rstrip() + "..." if len(sec["text"]) > 2000 else sec["text"]
         emb = {"color": color}
         if sec_text: emb["description"] = sec_text
         if sec["image"]: emb["image"] = {"url": sec["image"]}
-        if emb.get("description") or emb.get("image"): all_embeds.append(emb)
+        if emb.get("description") or emb.get("image"): content_embeds.append(emb)
 
-    if len(all_embeds) > 25:
-        all_embeds = all_embeds[:24]
-        all_embeds.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
+    if len(content_embeds) > 25:
+        content_embeds = content_embeds[:25]
+        content_embeds.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
 
     MAX_EMBEDS = 10 
-    for i in range(0, len(all_embeds), MAX_EMBEDS):
-        batch = all_embeds[i:i + MAX_EMBEDS]
-        payload = {"embeds": batch}
-        if i == 0:
-            payload["components"] = [{"type": 1, "components": [{"type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}}]}]
-        
-        send_to_discord_bot(payload, CHANNEL_ID_MAIN)
+    for i in range(0, len(content_embeds), MAX_EMBEDS):
+        batch = content_embeds[i:i + MAX_EMBEDS]
+        send_to_discord_bot({"embeds": batch}, CHANNEL_ID_MAIN)
 
 def run():
     if not BOT_TOKEN or not CHANNEL_ID_MAIN:
@@ -221,6 +239,7 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
+        # เซฟตี้: ดึงมาแค่ 1 โพสต์ถ้าเราสั่งเทส (ใส่ "0") หรือเลขเก่าเกินไป
         if saved_id == "0" or len(new_posts) >= 5: 
             if new_posts:
                 new_posts = [new_posts[0]]
