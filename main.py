@@ -96,8 +96,8 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    # ดึงข้อมูลจากหน้าแรกล่าสุด 5 โพสต์ (limit=5)
-    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
+    # เปลี่ยนลิมิตการดึงเป็น 20 โพสต์ เผื่อทีมงานอัปเดตรวดเดียวเยอะๆ
+    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=20&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
     try:
         res = requests.get(api_url, headers=headers, timeout=10)
@@ -136,7 +136,6 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     embed = {
         "author": {
             "name": "Trickcal RE:VIVE KR - Coupon",
-            "icon_url": "https://play-lh.googleusercontent.com/yS421eZOPqW61QeG0eOik_7XmGj7-f4xS5G1Lpsx9m1j4Sg2u0qP5-i1_98rS6zQyA=w240-h480-rw"
         },
         "title": target_data.get("title") or "쿠폰 안내",
         "color": 0x9B59B6,
@@ -144,7 +143,7 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
             {"name": "Coupon Code (ในมือถือกดค้าง Copy ได้)", "value": f"`{coupon_code}`", "inline": False},
             {"name": "Coupon Claim Period", "value": display_period, "inline": False}
         ],
-        "footer": {"text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"}
+        "footer": {"text": f"เคธี่น่ารัก 🍬 | ID: {feed_id}"}
     }
     
     embeds = [embed]
@@ -252,11 +251,9 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
-        # โหมดเทส: อนุญาตให้ดึงแค่โพสต์เดียวเฉพาะตอนจงใจใส่เลข "0"
-        if saved_id == "0" and new_posts: 
-            new_posts = [new_posts[0]]
-
+        # ลบล็อกทิ้งทั้งหมด! จะ 0 หรือกี่โพสต์ก็ดึงมาส่งให้หมด
         if new_posts:
+            # ดึงมาสูงสุด 20 โพสต์จาก API แล้วส่งเรียงคิวจากเก่าไปใหม่
             for post in reversed(new_posts): 
                 send_to_discord(post, cat)
             last_ids[board_id] = latest_id
