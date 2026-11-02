@@ -65,18 +65,26 @@ def parse_html_to_sections(raw_html):
         if txt or img: sections.append({"text": txt, "image": img})
     return sections
 
-def extract_coupon_code(text):
+def extract_coupon_info(text):
     coupon_code = "N/A"
-    match = re.search(r'쿠폰\s*코드[^\n]*\n+([^\n]+)', text)
-    if match:
-        coupon_code = match.group(1).replace('◆', '').replace('◇', '').strip()
+    claim_period = None
+    
+    match_code = re.search(r'쿠폰\s*코드[^\n]*\n+([^\n]+)', text)
+    if match_code:
+        coupon_code = match_code.group(1).replace('◆', '').replace('◇', '').strip()
         
     if coupon_code == "N/A" or not coupon_code:
         code_match = re.search(r'([A-Z0-9]{6,20})', text)
         if code_match:
             coupon_code = code_match.group(1)
             
-    return coupon_code
+    match_period = re.search(r'사용\s*기한[^\n]*\n+([^\n]+)', text)
+    if match_period:
+        claim_period = match_period.group(1).strip()
+        if claim_period.startswith("-"):
+            claim_period = claim_period[1:].strip()
+            
+    return coupon_code, claim_period
 
 def fetch_feed_detail(feed_id):
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
@@ -88,6 +96,7 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
+    # ดึงข้อมูลจากหน้าแรกล่าสุด 5 โพสต์ (limit=5)
     api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
     try:
@@ -109,17 +118,14 @@ def send_to_discord_bot(payload, target_channel):
     resp = requests.post(url, headers=headers, json=payload)
     return resp.status_code
 
-# ==========================================
-# 1. เลย์เอาต์คูปอง (เพิ่มระบบกวาดรูปภาพจากเนื้อหา)
-# ==========================================
 def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, target_channel):
     raw_contents = target_data.get("contents") or ""
     sections = parse_html_to_sections(raw_contents)
     full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
     
-    coupon_code = extract_coupon_code(full_text)
+    coupon_code, claim_period = extract_coupon_info(full_text)
+    display_period = claim_period if claim_period else f"โพสต์เมื่อ: {date_str}"
 
-    # รวบรวมรูปภาพทั้งหมด (รวมถึง GIF) จากทั้ง Thumbnail และในเนื้อหา
     all_images = []
     if thumb_url:
         all_images.append(thumb_url)
@@ -135,19 +141,16 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
         "title": target_data.get("title") or "쿠폰 안내",
         "color": 0x9B59B6,
         "fields": [
-            {"name": "Coupon Code", "value": f"`{coupon_code}`", "inline": False},
-            {"name": "Coupon Claim Period", "value": date_str, "inline": False}
+            {"name": "Coupon Code (ในมือถือกดค้าง Copy ได้)", "value": f"`{coupon_code}`", "inline": False},
+            {"name": "Coupon Claim Period", "value": display_period, "inline": False}
         ],
         "footer": {"text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"}
     }
     
     embeds = [embed]
     
-    # ถ้ามีรูปภาพ ให้เอารูปแรกใส่ในกล่องหลัก 
     if all_images:
         embed["image"] = {"url": all_images[0]}
-        
-        # ถ่ายรูปหรือ GIF อันต่อๆ ไป (ถ้ามี) แยกเป็นกล่องใหม่ติดๆ กัน
         for img_url in all_images[1:10]:
             embeds.append({
                 "color": 0x9B59B6,
@@ -169,9 +172,6 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     }
     send_to_discord_bot(payload, target_channel)
 
-# ==========================================
-# 2. เลย์เอาต์ประกาศทั่วไป 
-# ==========================================
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
@@ -252,9 +252,9 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
-        if saved_id == "0" or len(new_posts) >= 5: 
-            if new_posts:
-                new_posts = [new_posts[0]]
+        # โหมดเทส: อนุญาตให้ดึงแค่โพสต์เดียวเฉพาะตอนจงใจใส่เลข "0"
+        if saved_id == "0" and new_posts: 
+            new_posts = [new_posts[0]]
 
         if new_posts:
             for post in reversed(new_posts): 
