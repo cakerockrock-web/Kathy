@@ -2,7 +2,7 @@ name: YouTube Notifier
 
 on:
   schedule:
-    - cron: '*/10 * * * *'  # สั่งให้ตื่นมาเช็กทุกๆ 10 นาที
+    - cron: '* * * * *'  # สั่งให้ตื่นมาเช็กทุกๆ 1 นาที
   workflow_dispatch:
 
 jobs:
@@ -24,6 +24,5 @@ jobs:
       - name: Run YouTube Bot
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
         run: |
           python youtube_bot.py
