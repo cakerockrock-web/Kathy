@@ -104,40 +104,50 @@ def send_to_discord(feed_summary, category):
 
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
+    # 1. สร้างก้อนหัวเรื่อง
     header_embed = {"title": "트릭컬 리바이브", "description": f"**{title}**", "color": color}
     if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
+    
+    # 2. สร้างก้อนวันที่
     meta_embed = {"description": f"{date_str}   |   ID: {feed_id}", "color": color}
 
-    payload_header = {
-        "embeds": [header_embed, meta_embed],
-        "components": [{
-            "type": 1,
-            "components": [{
-                "type": 2,
-                "style": 5,
-                "label": " ไปที่ลิงก์", 
-                "url": post_url,
-                "emoji": {"name": "🟢"}
-            }]
-        }]
-    }
-    send_to_discord_bot(payload_header)
+    # 3. มัดรวมทุกอย่างไว้ในลิสต์เดียวกัน! (Header + Meta)
+    all_embeds = [header_embed, meta_embed]
 
+    # 4. หั่นเนื้อหาและดึงรูปลงมาต่อท้ายในลิสต์เดิม
     sections = parse_html_to_sections(raw_contents)
-    content_embeds = []
     for sec in sections:
         sec_text = sec["text"][:2000].rstrip() + "..." if len(sec["text"]) > 2000 else sec["text"]
         emb = {"color": color}
         if sec_text: emb["description"] = sec_text
         if sec["image"]: emb["image"] = {"url": sec["image"]}
-        if emb.get("description") or emb.get("image"): content_embeds.append(emb)
+        if emb.get("description") or emb.get("image"): 
+            all_embeds.append(emb)
+
+    # กันเหนียวถ้าโพสต์ยาวมากๆ ให้ตัดจบที่ 25 กล่อง (Discord จำกัดสูงสุด)
+    if len(all_embeds) > 25:
+        all_embeds = all_embeds[:24]
+        all_embeds.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
 
     MAX_EMBEDS = 10 
-    for i in range(0, len(content_embeds), MAX_EMBEDS):
-        batch = content_embeds[i:i + MAX_EMBEDS]
-        if i + MAX_EMBEDS >= len(content_embeds) and len(content_embeds) > 25:
-            batch.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
-        send_to_discord_bot({"embeds": batch})
+    for i in range(0, len(all_embeds), MAX_EMBEDS):
+        batch = all_embeds[i:i + MAX_EMBEDS]
+        payload = {"embeds": batch}
+        
+        # แนบปุ่มเข้าไปเฉพาะในก้อนแรกสุดที่ส่ง
+        if i == 0:
+            payload["components"] = [{
+                "type": 1,
+                "components": [{
+                    "type": 2,
+                    "style": 5,
+                    "label": " ไปที่ลิงก์", 
+                    "url": post_url,
+                    "emoji": {"name": "🟢"}
+                }]
+            }]
+            
+        send_to_discord_bot(payload)
 
 def run():
     if not BOT_TOKEN or not CHANNEL_ID:
@@ -160,7 +170,6 @@ def run():
             updated = True
             continue
 
-        # --- แก้ไขลอจิกตรงนี้ให้กลับมาเป็นแบบเดิม ทำงานถูกต้องชัวร์ๆ ---
         new_posts = []
         for feed in feeds:
             f_id = str(feed.get("feedId"))
@@ -168,7 +177,6 @@ def run():
                 break
             new_posts.append(feed)
 
-        # โหมดเทส
         if saved_id == "0" and len(new_posts) > 0: 
             new_posts = [new_posts[0]]
 
