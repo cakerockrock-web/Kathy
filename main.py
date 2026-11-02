@@ -96,8 +96,8 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    # เปลี่ยนลิมิตการดึงเป็น 20 โพสต์ เผื่อทีมงานอัปเดตรวดเดียวเยอะๆ
-    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=20&offset=0&order=NEW"
+    # ปรับลิมิตกลับมาเป็น 5 โพสต์ กำลังดี ไม่สแปมแชท
+    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
     try:
         res = requests.get(api_url, headers=headers, timeout=10)
@@ -251,9 +251,8 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
-        # ลบล็อกทิ้งทั้งหมด! จะ 0 หรือกี่โพสต์ก็ดึงมาส่งให้หมด
         if new_posts:
-            # ดึงมาสูงสุด 20 โพสต์จาก API แล้วส่งเรียงคิวจากเก่าไปใหม่
+            # ดึงมาสูงสุด 5 โพสต์ตามที่รับมาจาก API แล้วส่งเรียงคิวจากเก่าไปใหม่
             for post in reversed(new_posts): 
                 send_to_discord(post, cat)
             last_ids[board_id] = latest_id
