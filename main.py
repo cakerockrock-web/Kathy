@@ -110,15 +110,22 @@ def send_to_discord_bot(payload, target_channel):
     return resp.status_code
 
 # ==========================================
-# 1. เลย์เอาต์คูปอง (เอา Reward ออก เน้นรูป/GIF)
+# 1. เลย์เอาต์คูปอง (เพิ่มระบบกวาดรูปภาพจากเนื้อหา)
 # ==========================================
 def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, target_channel):
     raw_contents = target_data.get("contents") or ""
     sections = parse_html_to_sections(raw_contents)
     full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
     
-    # ดึงแค่รหัสคูปองอย่างเดียว
     coupon_code = extract_coupon_code(full_text)
+
+    # รวบรวมรูปภาพทั้งหมด (รวมถึง GIF) จากทั้ง Thumbnail และในเนื้อหา
+    all_images = []
+    if thumb_url:
+        all_images.append(thumb_url)
+    for sec in sections:
+        if sec.get("image") and sec["image"] not in all_images:
+            all_images.append(sec["image"])
 
     embed = {
         "author": {
@@ -134,12 +141,21 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
         "footer": {"text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"}
     }
     
-    # ดึงรูปภาพหรือ GIF มาแสดงเต็มๆ แบบคลีนๆ
-    if thumb_url: 
-        embed["image"] = {"url": thumb_url}
+    embeds = [embed]
+    
+    # ถ้ามีรูปภาพ ให้เอารูปแรกใส่ในกล่องหลัก 
+    if all_images:
+        embed["image"] = {"url": all_images[0]}
+        
+        # ถ่ายรูปหรือ GIF อันต่อๆ ไป (ถ้ามี) แยกเป็นกล่องใหม่ติดๆ กัน
+        for img_url in all_images[1:10]:
+            embeds.append({
+                "color": 0x9B59B6,
+                "image": {"url": img_url}
+            })
     
     payload = {
-        "embeds": [embed],
+        "embeds": embeds,
         "components": [{
             "type": 1,
             "components": [{
@@ -154,7 +170,7 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     send_to_discord_bot(payload, target_channel)
 
 # ==========================================
-# 2. เลย์เอาต์ประกาศทั่วไป (ดึงปุ่มกลับมาไว้บนสุด)
+# 2. เลย์เอาต์ประกาศทั่วไป 
 # ==========================================
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
@@ -167,13 +183,11 @@ def send_to_discord(feed_summary, category):
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # เลี้ยวไปห้องคูปอง
     if "쿠폰" in title:
         route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
         send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
         return
 
-    # ก้อนที่ 1: หัวเรื่อง + ปุ่มกด (ล็อคปุ่มไว้ด้านบนสุด)
     header_embed = {
         "title": "트릭컬 리바이브", 
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
@@ -192,7 +206,6 @@ def send_to_discord(feed_summary, category):
     }
     send_to_discord_bot(payload_header, CHANNEL_ID_MAIN)
 
-    # ก้อนที่ 2: เนื้อหาทั้งหมดเรียงต่อกัน
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     
@@ -239,7 +252,6 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
-        # เซฟตี้: ดึงมาแค่ 1 โพสต์ถ้าเราสั่งเทส (ใส่ "0") หรือเลขเก่าเกินไป
         if saved_id == "0" or len(new_posts) >= 5: 
             if new_posts:
                 new_posts = [new_posts[0]]
