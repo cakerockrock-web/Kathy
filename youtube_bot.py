@@ -10,13 +10,13 @@ STORAGE_FILE = "last_youtube_videos.json"
 YOUTUBE_CHANNELS = [
     {
         "name": "ช่องที่ 1",
-        "feed_url": "[https://www.youtube.com/@AlJazeeraEnglish",
+        "feed_url": "https://www.youtube.com/@aljazeeraenglish",
         "discord_channel_id": "1566895972859121885"
     },
     {
         "name": "ช่องที่ 2",
-        "feed_url": "https://www.youtube.com/@Patima_KR",
-        "discord_channel_id": "1566904623304810547"
+        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=ใส่_Channel_ID_ช่องที่สอง_ตรงนี้",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_สำหรับช่องที่สอง_ตรงนี้"
     }
 ]
 
@@ -44,7 +44,6 @@ def send_to_discord(payload, target_channel):
     requests.post(url, headers=headers, json=payload)
 
 def run():
-    send_to_discord(payload_test, test_channel)
     if not BOT_TOKEN:
         print("Missing BOT_TOKEN", flush=True)
         return
