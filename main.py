@@ -6,7 +6,9 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID")
+CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
+# ดึงเลขห้องคูปองมาใช้งาน
+CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
 STORAGE_FILE = "last_ids.json"
 
 CATEGORIES = [
@@ -65,12 +67,10 @@ def parse_html_to_sections(raw_html):
     return sections
 
 def extract_coupon_data(text):
-    # พยายามงมหารหัสคูปอง (ตัวอักษรภาษาอังกฤษ+ตัวเลข พิมพ์ใหญ่ติดกัน 6 ตัวขึ้นไป)
     coupon_code = "N/A"
     code_match = re.search(r'([A-Z0-9]{6,20})', text)
     if code_match:
         coupon_code = code_match.group(1)
-    
     return coupon_code, text
 
 def fetch_feed_detail(feed_id):
@@ -91,8 +91,13 @@ def fetch_lounge_feeds(board_id):
     except: pass
     return []
 
-def send_to_discord_bot(payload):
-    url = f"https://discord.com/api/v10/channels/{CHANNEL_ID}/messages"
+# เพิ่มตัวแปร target_channel เพื่อให้ระบุปลายทางได้
+def send_to_discord_bot(payload, target_channel):
+    if not target_channel:
+        print("Error: Target channel ID is empty!", flush=True)
+        return
+        
+    url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
     headers = {
         "Authorization": f"Bot {BOT_TOKEN}",
         "Content-Type": "application/json"
@@ -100,11 +105,9 @@ def send_to_discord_bot(payload):
     resp = requests.post(url, headers=headers, json=payload)
     return resp.status_code
 
-# ฟังก์ชันแยก: เลย์เอาต์คูปอง
-def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str):
+def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, target_channel):
     raw_contents = target_data.get("contents") or ""
     sections = parse_html_to_sections(raw_contents)
-    
     full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
     coupon_code, text_content = extract_coupon_data(full_text)
     
@@ -117,41 +120,21 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
             "icon_url": "https://play-lh.googleusercontent.com/yS421eZOPqW61QeG0eOik_7XmGj7-f4xS5G1Lpsx9m1j4Sg2u0qP5-i1_98rS6zQyA=w240-h480-rw"
         },
         "title": target_data.get("title") or "쿠폰 안내",
-        "color": 0x9B59B6, # สีม่วงแบบห้องคูปอง
+        "color": 0x9B59B6,
         "fields": [
-            {
-                "name": "Coupon Code",
-                "value": f"`{coupon_code}`",
-                "inline": False
-            },
-            {
-                "name": "Coupon Reward / Details",
-                "value": f"```\n{text_content}\n```",
-                "inline": False
-            },
-            {
-                "name": "Coupon Claim Period",
-                "value": date_str,
-                "inline": False
-            },
-            {
-                "name": "Coupon Claim Method",
-                "value": f"[Ingame or Click Here]({post_url})",
-                "inline": False
-            }
+            {"name": "Coupon Code", "value": f"`{coupon_code}`", "inline": False},
+            {"name": "Coupon Reward / Details", "value": f"```\n{text_content}\n```", "inline": False},
+            {"name": "Coupon Claim Period", "value": date_str, "inline": False},
+            {"name": "Coupon Claim Method", "value": f"[Ingame or Click Here]({post_url})", "inline": False}
         ],
-        "footer": {
-            "text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"
-        }
+        "footer": {"text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"}
     }
+    if thumb_url: embed["image"] = {"url": thumb_url}
     
-    if thumb_url:
-        embed["image"] = {"url": thumb_url}
-        
     payload = {"embeds": [embed]}
-    send_to_discord_bot(payload)
+    # ส่งไปห้องคูปอง
+    send_to_discord_bot(payload, target_channel)
 
-# ฟังก์ชันหลัก: ตัดสินใจว่าจะใช้เลย์เอาต์ไหน
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
@@ -163,13 +146,15 @@ def send_to_discord(feed_summary, category):
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # --- เช็กว่าเป็นโพสต์คูปองหรือไม่? ---
+    # --- เลี้ยวขวา! ถ้าเป็นคูปอง ให้ส่งไปห้องคูปอง ---
     if "쿠폰" in title:
-        print(f"Coupon detected! Routing ID {feed_id} to Coupon Layout.", flush=True)
-        send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str)
+        print(f"Coupon detected! Routing to Coupon Channel.", flush=True)
+        # ถ้าไม่ได้ตั้ง CHANNEL_ID_COUPON ไว้ ให้กันเหนียวส่งไปห้องหลักแทน
+        route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
+        send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
         return
 
-    # ถ้าไม่ใช่คูปอง ให้ใช้หน้าต่างปกติ (ติดกันเป็นแพ็กเดียว)
+    # --- เลี้ยวซ้าย! ถ้าเป็นอัปเดตปกติ ให้ส่งไปห้องหลัก ---
     header_embed = {"title": "트릭컬 리바이브", "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", "color": color}
     if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
 
@@ -192,11 +177,13 @@ def send_to_discord(feed_summary, category):
         payload = {"embeds": batch}
         if i == 0:
             payload["components"] = [{"type": 1, "components": [{"type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}}]}]
-        send_to_discord_bot(payload)
+        
+        # ส่งไปห้องหลัก
+        send_to_discord_bot(payload, CHANNEL_ID_MAIN)
 
 def run():
-    if not BOT_TOKEN or not CHANNEL_ID:
-        print("Missing BOT_TOKEN or CHANNEL_ID", flush=True)
+    if not BOT_TOKEN or not CHANNEL_ID_MAIN:
+        print("Missing BOT_TOKEN or CHANNEL_ID_MAIN", flush=True)
         return
 
     last_ids = load_last_ids()
