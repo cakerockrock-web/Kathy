@@ -148,7 +148,7 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
         "color": 0x9B59B6,
         "fields": [
             {"name": "Coupon Code (ในมือถือกดค้าง Copy ได้)", "value": f"`{coupon_code}`", "inline": False},
-            {"name": "Coupon Claim Period", "value": display_period, "inline": False}
+            {"name": "วันรับ-วันหมดอายุ", "value": display_period, "inline": False}
         ],
         "footer": {"text": f"เคธี่น่ารัก 🍬 | ID: {feed_id}"}
     }
