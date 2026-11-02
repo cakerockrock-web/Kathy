@@ -68,12 +68,11 @@ def parse_html_to_sections(raw_html):
 def extract_coupon_data(text):
     coupon_code = "N/A"
     
-    # 1. พยายามหาบรรทัดที่อยู่ใต้คำว่า 쿠폰 코드 (Coupon Code)
-    match = re.search(r'쿠폰\s*(?:코드|번호)[^\n]*\n+([^\n]+)', text)
+    # ดักจับหัวข้อ 쿠폰 코드 (มีอักขระพิเศษรอบๆ ได้) แล้วดึงบรรทัดที่มีข้อความบรรทัดถัดไป
+    match = re.search(r'쿠폰\s*코드[^\n]*\n+([^\n]+)', text)
     if match:
-        coupon_code = match.group(1).replace('◆', '').replace('◇', '').strip()
-    
-    # 2. ถ้าหาไม่เจอ ให้ใช้ไม้ตายเดิม คืองมหาภาษาอังกฤษตัวพิมพ์ใหญ่
+        coupon_code = match.group(1).strip()
+        
     if coupon_code == "N/A" or not coupon_code:
         code_match = re.search(r'([A-Z0-9]{6,20})', text)
         if code_match:
@@ -131,14 +130,27 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
         "fields": [
             {"name": "Coupon Code", "value": f"`{coupon_code}`", "inline": False},
             {"name": "Coupon Reward / Details", "value": f"```\n{text_content}\n```", "inline": False},
-            {"name": "Coupon Claim Period", "value": date_str, "inline": False},
-            {"name": "Coupon Claim Method", "value": f"[Ingame or Click Here]({post_url})", "inline": False}
+            {"name": "Coupon Claim Period", "value": date_str, "inline": False}
+            # ตัดช่อง Method แบบเก่าทิ้งไป เพราะเราจะใช้ปุ่มกดแล้ว
         ],
         "footer": {"text": f"Trickcal Notifier powered by 🍬 | ID: {feed_id}"}
     }
     if thumb_url: embed["image"] = {"url": thumb_url}
     
-    payload = {"embeds": [embed]}
+    # เพิ่มปุ่ม UI ของแท้ไปที่ก้อนคูปอง
+    payload = {
+        "embeds": [embed],
+        "components": [{
+            "type": 1,
+            "components": [{
+                "type": 2, 
+                "style": 5, 
+                "label": " Ingame or Click Here", 
+                "url": post_url, 
+                "emoji": {"name": "🟢"}
+            }]
+        }]
+    }
     send_to_discord_bot(payload, target_channel)
 
 def send_to_discord(feed_summary, category):
@@ -209,7 +221,6 @@ def run():
             if f_id == saved_id: break
             new_posts.append(feed)
 
-        # เซฟตี้: ถ้าตั้งใจเทส (ใส่ "0") หรือตั้งเลขเก่าเกินไปจนทะลุโควตา ให้ดึงมาแค่โพสต์เดียวเพื่อกันสแปม
         if saved_id == "0" or len(new_posts) >= 5: 
             if new_posts:
                 new_posts = [new_posts[0]]
