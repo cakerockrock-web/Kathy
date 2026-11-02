@@ -9,7 +9,7 @@ STORAGE_FILE = "last_ids.json"
 
 CATEGORIES = [
     {
-        "board_id": "0",  # หมวดรวมโพสต์สำหรับทดสอบ (เทสเสร็จแล้วค่อยลบออกได้)
+        "board_id": "0",  # หมวดรวมโพสต์สำหรับทดสอบ (เทสเสร็จแล้วลบออกได้)
         "name": "🔥 รวมโพสต์ทั้งหมด",
         "color": 0xE74C3C
     },
@@ -44,7 +44,7 @@ def save_last_ids(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def clean_html_to_markdown(raw_html):
-    """แปลงแท็ก HTML ในเนื้อหาโพสต์ให้กลายเป็นข้อความอ่านง่ายบน Discord"""
+    """แปลงแท็ก HTML เป็น Markdown ข้อความอ่านง่ายใน Discord"""
     if not raw_html:
         return ""
     text = re.sub(r'<\s*br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
@@ -56,7 +56,7 @@ def clean_html_to_markdown(raw_html):
     return text.strip()
 
 def fetch_feed_detail(feed_id):
-    """ดึงข้อมูลเนื้อหาและรูปภาพฉบับเต็มของโพสต์"""
+    """ดึงข้อมูลเนื้อหาและไฟล์แนบทั้งหมดจากหน้าโพสต์จริง"""
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -90,6 +90,44 @@ def fetch_lounge_feeds(board_id):
         print(f"Board {board_id} Error: {e}", flush=True)
     return []
 
+def extract_all_media(target_data, raw_contents):
+    """ดึง URL รูปภาพทั้งหมด รวมถึง GIF และไฟล์มีเดียจากทุกช่องทาง"""
+    media_list = []
+
+    def add_url(url):
+        if not url or not isinstance(url, str):
+            return
+        url = url.strip()
+        if url.startswith("//"):
+            url = "https:" + url
+        if url.startswith("http") and url not in media_list:
+            media_list.append(url)
+
+    # 1. ดึงจาก Representations (ไม่จำกัดเฉพาะ IMAGE เพื่อให้ได้ GIF/ATTACHMENT ทั้งหมด)
+    for rep in target_data.get("representations", []):
+        add_url(rep.get("path"))
+        add_url(rep.get("url"))
+
+    # 2. ดึงจากแท็ก <img> ครอบคลุมทั้ง src, data-src และ data-original (รองรับ Lazy Load)
+    img_tag_urls = re.findall(
+        r'<img[^>]+(?:src|data-src|data-original)=["\']([^"\']+)["\']',
+        raw_contents,
+        flags=re.IGNORECASE
+    )
+    for u in img_tag_urls:
+        add_url(u)
+
+    # 3. ดึงลิงก์ไฟล์รูปภาพ/GIF ที่อาจซ่อนอยู่ในเนื้อหา หรือแท็กอื่นๆ
+    file_urls = re.findall(
+        r'https?://[^\s"\'<>]+\.(?:gif|png|jpe?g|webp)(?:\?[^\s"\'<>]*)?',
+        raw_contents,
+        flags=re.IGNORECASE
+    )
+    for u in file_urls:
+        add_url(u)
+
+    return media_list
+
 def send_to_discord(feed_summary, category):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
@@ -110,45 +148,57 @@ def send_to_discord(feed_summary, category):
     if not clean_desc:
         clean_desc = f"มีประกาศใหม่ในหมวด **{category['name']}**\n[คลิกเพื่อดูรายละเอียด]({post_url})"
 
-    images = []
-    for rep in target_data.get("representations", []):
-        if rep.get("representationType") == "IMAGE" and rep.get("path"):
-            images.append(rep.get("path"))
+    all_media = extract_all_media(target_data, raw_contents)
 
-    inline_imgs = re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', raw_contents, flags=re.IGNORECASE)
-    for img in inline_imgs:
-        if img.startswith("http") and img not in images:
-            images.append(img)
+    # Discord กำหนดให้ 1 ข้อความส่ง Embed ได้สูงสุด 10 รูป
+    # เราจะแบ่งส่งรูปเป็นชุด ๆ ละไม่เกิน 10 รูป เพื่อให้แสดงรูปและ GIF ได้ครบทั้งหมด
+    batch_size = 10
+    total_images = len(all_media)
 
-    valid_images = [img for img in images if img.startswith("http")]
-
-    main_embed = {
-        "title": f"📢 {title}",
-        "url": post_url,
-        "description": clean_desc,
-        "color": category["color"],
-        "footer": {
-            "text": f"Naver Lounge • {category['name']}"
+    if total_images == 0:
+        # กรณีไม่มีรูปภาพเลย
+        payload = {
+            "username": "Trickcal Notifier",
+            "embeds": [{
+                "title": f"📢 {title}",
+                "url": post_url,
+                "description": clean_desc,
+                "color": category["color"],
+                "footer": {"text": f"Naver Lounge • {category['name']}"}
+            }]
         }
-    }
-    if valid_images:
-        main_embed["image"] = {"url": valid_images[0]}
-
-    embeds = [main_embed]
-
-    for extra_img in valid_images[1:4]:
-        embeds.append({
+        requests.post(WEBHOOK_URL, json=payload)
+    else:
+        # กรณีมีรูป/GIF: ส่งข้อความแรกพร้อมเนื้อหา + รูปชุดแรก
+        first_batch = all_media[:batch_size]
+        first_embeds = [{
+            "title": f"📢 {title}",
             "url": post_url,
-            "image": {"url": extra_img}
-        })
+            "description": clean_desc,
+            "color": category["color"],
+            "image": {"url": first_batch[0]},
+            "footer": {"text": f"Naver Lounge • {category['name']} (รวมมีเดียทั้งหมด {total_images} ไฟล์)"}
+        }]
+        for extra_img in first_batch[1:]:
+            first_embeds.append({
+                "url": post_url,
+                "image": {"url": extra_img}
+            })
 
-    payload = {
-        "username": "Trickcal Notifier",
-        "embeds": embeds
-    }
+        requests.post(WEBHOOK_URL, json={"username": "Trickcal Notifier", "embeds": first_embeds})
 
-    resp = requests.post(WEBHOOK_URL, json=payload)
-    print(f"Sent post {feed_id} to Discord - Status: {resp.status_code}", flush=True)
+        # หากมีรูป/GIF เกิน 10 ไฟล์ ระบบจะยิงข้อความตามมาเก็บตกรูปที่เหลือให้ครบ ไม่ทิ้งแม้แต่รูปเดียว
+        for i in range(batch_size, total_images, batch_size):
+            remaining_batch = all_media[i:i + batch_size]
+            followup_embeds = []
+            for img in remaining_batch:
+                followup_embeds.append({
+                    "url": post_url,
+                    "image": {"url": img}
+                })
+            requests.post(WEBHOOK_URL, json={"username": "Trickcal Notifier", "embeds": followup_embeds})
+
+    print(f"Sent post {feed_id} to Discord with {total_images} media items.", flush=True)
 
 def run():
     if not WEBHOOK_URL:
@@ -193,4 +243,4 @@ def run():
         save_last_ids(last_ids)
 
 if __name__ == "__main__":
-    run()
+    run() 
