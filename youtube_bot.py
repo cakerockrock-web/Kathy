@@ -15,8 +15,8 @@ YOUTUBE_CHANNELS = [
     },
     {
         "name": "ช่องที่ 2",
-        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=ใส่_Channel_ID_ช่องที่สอง_ตรงนี้",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_สำหรับช่องที่สอง_ตรงนี้"
+        "feed_url": "https://www.youtube.com/@Patima_KR",
+        "discord_channel_id": "1566904623304810547"
     }
 ]
 
