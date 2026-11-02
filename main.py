@@ -67,22 +67,16 @@ def parse_html_to_sections(raw_html):
                 return f"[[IMG_TOKEN:{img_url}]]"
         return ""
 
-    # 1. จัดการรูปภาพ (ไม่เว้นบรรทัด \n\n ทิ้งไว้แล้ว เพื่อลดช่องว่าง)
     text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
-    
-    # 2. ปรับการขึ้นบรรทัดใหม่ให้ชิดกันมากขึ้น (</p> และ <br> ให้เป็นแค่ \n เดียว)
     text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/(?:p|div|h[1-6]|tr|li|ul|ol)\s*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/(?:td|th)\s*>', ' ', text, flags=re.IGNORECASE)
     
-    # 3. ลบแท็ก HTML ที่เหลือทั้งหมด
     text = re.sub(r'<[^>]+>', '', text)
     text = html.unescape(text)
     
-    # 4. กำจัด "ช่องว่างผี" (Non-breaking & Zero-width space) ที่ทำให้ Discord เว้นบรรทัดห่าง
     text = text.replace("\xa0", " ").replace("\u200b", "")
     
-    # 5. ยุบช่องว่างและบรรทัดที่ซ้อนกันเยอะเกินไป ให้เหลือช่องว่างและบรรทัดว่างสูงสุดแค่ 1 บรรทัด
     text = re.sub(r'[ \t]+', ' ', text)
     text = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', text)
     text = text.strip()
@@ -92,7 +86,6 @@ def parse_html_to_sections(raw_html):
     
     for i in range(0, len(tokens), 2):
         txt = tokens[i].strip()
-        # ทำความสะอาดส่วนปลายทางอีกรอบเพื่อความชัวร์
         txt = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', txt)
         img = tokens[i+1].strip() if i+1 < len(tokens) else None
         
@@ -234,6 +227,12 @@ def run():
             if f_id == saved_id:
                 break
             new_posts.append(feed)
+
+        # --- แก้ลอจิกตรงนี้ --- 
+        # ถ้าจำว่าเก่าคือ "0" ให้ตัดลิสต์เหลือแค่โพสต์ล่าสุดโพสต์เดียว (Index 0)
+        if saved_id == "0" and len(new_posts) > 0:
+            new_posts = [new_posts[0]]
+            print(f"Board {board_id}: Test mode! Sending only the latest 1 post.", flush=True)
 
         if new_posts:
             print(f"Board {board_id}: Found {len(new_posts)} new posts. Sending...", flush=True)
