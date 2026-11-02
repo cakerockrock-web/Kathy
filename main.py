@@ -5,7 +5,6 @@ import json
 import requests
 from datetime import datetime, timezone, timedelta
 
-# เปลี่ยนมารับค่า Token และ Channel ID แทน
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CHANNEL_ID = os.environ.get("DISCORD_CHANNEL_ID")
 STORAGE_FILE = "last_ids.json"
@@ -84,7 +83,6 @@ def fetch_lounge_feeds(board_id):
     except: pass
     return []
 
-# ฟังก์ชันสำหรับส่งผ่าน Discord Bot API
 def send_to_discord_bot(payload):
     url = f"https://discord.com/api/v10/channels/{CHANNEL_ID}/messages"
     headers = {
@@ -106,7 +104,6 @@ def send_to_discord(feed_summary, category):
 
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # 1. ข้อความก้อนแรก: หัวข้อ + ปุ่มกดของแท้!
     header_embed = {"title": "트릭컬 리바이브", "description": f"**{title}**", "color": color}
     if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
     meta_embed = {"description": f"{date_str}   |   ID: {feed_id}", "color": color}
@@ -118,7 +115,7 @@ def send_to_discord(feed_summary, category):
             "components": [{
                 "type": 2,
                 "style": 5,
-                "label": " ไปที่ลิงก์ Naver",  # ชื่อปุ่ม
+                "label": " ไปที่ลิงก์", 
                 "url": post_url,
                 "emoji": {"name": "🟢"}
             }]
@@ -126,7 +123,6 @@ def send_to_discord(feed_summary, category):
     }
     send_to_discord_bot(payload_header)
 
-    # 2. ข้อความก้อนที่สอง: เนื้อหา Sections
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     for sec in sections:
@@ -136,13 +132,12 @@ def send_to_discord(feed_summary, category):
         if sec["image"]: emb["image"] = {"url": sec["image"]}
         if emb.get("description") or emb.get("image"): content_embeds.append(emb)
 
-    MAX_EMBEDS = 10 # Discord Bot API รับได้ 10 embeds ต่อ 1 request
+    MAX_EMBEDS = 10 
     for i in range(0, len(content_embeds), MAX_EMBEDS):
         batch = content_embeds[i:i + MAX_EMBEDS]
         if i + MAX_EMBEDS >= len(content_embeds) and len(content_embeds) > 25:
             batch.append({"description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]", "color": color})
         send_to_discord_bot({"embeds": batch})
-        print(f"Sent content batch {i//MAX_EMBEDS + 1} for ID {feed_id}", flush=True)
 
 def run():
     if not BOT_TOKEN or not CHANNEL_ID:
@@ -165,13 +160,21 @@ def run():
             updated = True
             continue
 
-        new_posts = [f for f in feeds if str(f.get("feedId")) != saved_id]
-        new_posts = new_posts[:new_posts.index(next((f for f in new_posts if str(f.get("feedId")) == saved_id), new_posts[-1]))+1] if new_posts else []
+        # --- แก้ไขลอจิกตรงนี้ให้กลับมาเป็นแบบเดิม ทำงานถูกต้องชัวร์ๆ ---
+        new_posts = []
+        for feed in feeds:
+            f_id = str(feed.get("feedId"))
+            if f_id == saved_id:
+                break
+            new_posts.append(feed)
 
-        if saved_id == "0" and new_posts: new_posts = [new_posts[0]]
+        # โหมดเทส
+        if saved_id == "0" and len(new_posts) > 0: 
+            new_posts = [new_posts[0]]
 
         if new_posts:
-            for post in reversed(new_posts): send_to_discord(post, cat)
+            for post in reversed(new_posts): 
+                send_to_discord(post, cat)
             last_ids[board_id] = latest_id
             updated = True
 
