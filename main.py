@@ -39,18 +39,18 @@ def save_last_ids(data):
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def format_kst_time(timestamp_val):
-    if not timestamp_val:
-        return ""
-    try:
-        kst = timezone(timedelta(hours=9))
-        if isinstance(timestamp_val, (int, float)) or (isinstance(timestamp_val, str) and timestamp_val.isdigit()):
-            dt = datetime.fromtimestamp(int(timestamp_val) / 1000, tz=kst)
-        else:
-            dt = datetime.now(tz=kst)
-        return f"{dt.year}년 {dt.month}월 {dt.day}일 {dt.hour}시 {dt.minute}분"
-    except Exception:
-        return ""
+def format_thai_time(timestamp_val):
+    kst = timezone(timedelta(hours=9))
+    if timestamp_val and (isinstance(timestamp_val, (int, float)) or (isinstance(timestamp_val, str) and timestamp_val.isdigit())):
+        dt = datetime.fromtimestamp(int(timestamp_val) / 1000, tz=kst)
+    else:
+        dt = datetime.now(tz=kst)
+        
+    thai_months = [
+        "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+        "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+    ]
+    return f"{dt.day} {thai_months[dt.month-1]} {dt.year} {dt.hour:02d}:{dt.minute:02d} น."
 
 def parse_html_to_sections(raw_html):
     if not raw_html:
@@ -134,8 +134,10 @@ def send_to_discord(feed_summary, category):
     title = target_data.get("title") or "공지사항"
     raw_contents = target_data.get("contents") or ""
     color = category["color"]
-    created_at = target_data.get("created_at") or target_data.get("createdAt")
-    date_str = format_kst_time(created_at)
+    
+    # ดักจับเวลาจากหลายๆ ตัวแปร เผื่อ API ของ Naver ส่งมาในชื่ออื่น
+    raw_time = target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("writeDate") or target_data.get("timestamp")
+    date_str = format_thai_time(raw_time)
 
     thumb_url = None
     for rep in target_data.get("representations", []):
@@ -154,7 +156,7 @@ def send_to_discord(feed_summary, category):
         header_embed["thumbnail"] = {"url": thumb_url}
     embeds.append(header_embed)
 
-    meta_desc = f"{date_str}   |   ID: {feed_id}\n🟢 [ไปที่ลิงก์↗]({post_url})"
+    meta_desc = f"{date_str}   |   ID: {feed_id}\n🟢 [ไปที่ลิงก์ ↗]({post_url})"
     embeds.append({
         "description": meta_desc,
         "color": color
@@ -184,7 +186,7 @@ def send_to_discord(feed_summary, category):
     if len(embeds) > MAX_TOTAL_EMBEDS:
         embeds = embeds[:MAX_TOTAL_EMBEDS]
         embeds.append({
-            "description": "[ 컴포넌트 초과로 자세한 내용은 생략합니다 ]",
+            "description": "[ คอมโพเนนต์เกินขีดจำกัด ขอละรายละเอียดบางส่วนไว้ ]",
             "color": color
         })
 
@@ -228,11 +230,9 @@ def run():
                 break
             new_posts.append(feed)
 
-        # --- แก้ลอจิกตรงนี้ --- 
-        # ถ้าจำว่าเก่าคือ "0" ให้ตัดลิสต์เหลือแค่โพสต์ล่าสุดโพสต์เดียว (Index 0)
+        # ลอจิกสำหรับทดสอบดึง 1 โพสต์
         if saved_id == "0" and len(new_posts) > 0:
             new_posts = [new_posts[0]]
-            print(f"Board {board_id}: Test mode! Sending only the latest 1 post.", flush=True)
 
         if new_posts:
             print(f"Board {board_id}: Found {len(new_posts)} new posts. Sending...", flush=True)
