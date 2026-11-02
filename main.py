@@ -118,7 +118,7 @@ def send_to_discord(feed_summary, category):
             "components": [{
                 "type": 2,
                 "style": 5,
-                "label": " 네이버 라운지",  # ชื่อปุ่ม
+                "label": " ไปที่ลิงก์ Naver",  # ชื่อปุ่ม
                 "url": post_url,
                 "emoji": {"name": "🟢"}
             }]
