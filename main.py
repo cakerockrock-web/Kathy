@@ -9,19 +9,24 @@ STORAGE_FILE = "last_ids.json"
 # กำหนดหมวดหมู่ที่ต้องการเฝ้าดู (เพิ่ม/ลด หรือเปลี่ยนสีได้ตามใจชอบ)
 CATEGORIES = [
     {
+        "menu_id": "0",
+        "name": "🔥 ทดสอบ: โพสต์ทั้งหมด (All Posts)",
+        "color": 0xE74C3C  # สีแดง
+    },
+    {
         "menu_id": "67",
         "name": "🎟️ คูปอง / กิจกรรม",
-        "color": 0xF1C40F  # สีทอง
+        "color": 0xF1C40F
     },
     {
         "menu_id": "68",
         "name": "🛠️ ประกาศอัปเดต",
-        "color": 0x3498DB  # สีฟ้า
+        "color": 0x3498DB
     },
     {
         "menu_id": "85",
-        "name": "📝 Dev Note (สารจากผู้พัฒนา)",
-        "color": 0x9B59B6  # สีม่วง
+        "name": "📝 Dev Note",
+        "color": 0x9B59B6
     }
 ]
 
