@@ -8,7 +8,6 @@ from datetime import datetime, timezone, timedelta
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 STORAGE_FILE = "last_ids.json"
 
-# กำหนดหมวดหมู่ตามลิงก์ที่ให้มา
 CATEGORIES = [
     {
         "board_id": "8",
@@ -240,4 +239,10 @@ def run():
             last_ids[board_id] = latest_id
             updated = True
         else:
-            print(f
+            print(f"Board {board_id}: Up to date (Latest: {latest_id})", flush=True)
+
+    if updated:
+        save_last_ids(last_ids)
+
+if __name__ == "__main__":
+    run()
