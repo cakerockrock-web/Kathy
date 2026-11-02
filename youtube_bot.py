@@ -10,7 +10,7 @@ STORAGE_FILE = "last_youtube_videos.json"
 YOUTUBE_CHANNELS = [
     {
         "name": "ช่องที่ 1",
-        "feed_url": "[https://www.youtube.com/@epidgames6350",
+        "feed_url": "[https://www.youtube.com/@FRANCE24English",
         "discord_channel_id": "1566895972859121885"
     },
     {
