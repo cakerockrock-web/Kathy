@@ -154,7 +154,7 @@ def send_to_discord(feed_summary, category):
         header_embed["thumbnail"] = {"url": thumb_url}
     embeds.append(header_embed)
 
-    meta_desc = f"{date_str}   |   ID: {feed_id}\n🟢 [네이버 라운지 ↗]({post_url})"
+    meta_desc = f"{date_str}   |   ID: {feed_id}\n🟢 [ไปที่ลิงก์↗]({post_url})"
     embeds.append({
         "description": meta_desc,
         "color": color
