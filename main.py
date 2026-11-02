@@ -192,7 +192,7 @@ def send_to_discord(feed_summary, category):
     for i in range(0, len(embeds), batch_size):
         batch = embeds[i:i + batch_size]
         payload = {
-            "username": "Trickcal Notifier",
+            "username": "เคธี่ นักสอดแนม",
             "embeds": batch
         }
         resp = requests.post(WEBHOOK_URL, json=payload)
