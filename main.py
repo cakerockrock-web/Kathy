@@ -43,32 +43,32 @@ def save_last_ids(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def fetch_articles(menu_id):
-    # ปรับ endpoint และ query parameter ให้ตรงตาม Naver Cafe API
-    api_url = "https://apis.naver.com/cafe-web/cafe2/ArticleList.json"
-    
-    # หาก menu_id เป็น "0" ให้เว้นว่างเพื่อดึงกระทู้ทั้งหมด
-    target_menu = "" if menu_id == "0" else menu_id
-    
-    params = {
-        "search.clubid": CAFE_ID,
-        "search.menuid": target_menu,
-        "search.queryType": "lastArticle",
-        "search.page": "1",
-        "search.perPage": "5"
-    }
+    # ใช้ Mobile Endpoint ของ Naver Cafe ซึ่งเปิดรับคำขอจากภายนอกได้เสถียรกว่า
+    api_url = f"https://apis.naver.com/cafe-web/cafe-mobile/CafeMemberNetworkArticleList?cafeId={CAFE_ID}"
+    if menu_id != "0":
+        api_url = f"https://apis.naver.com/cafe-web/cafe-mobile/CafeMemberNetworkArticleList?cafeId={CAFE_ID}&menuId={menu_id}"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": f"https://cafe.naver.com/{CAFE_ID}"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": f"https://m.cafe.naver.com/ca-fe/web/cafes/{CAFE_ID}/menus/{menu_id}",
+        "Origin": "https://m.cafe.naver.com"
     }
 
     try:
-        res = requests.get(api_url, params=params, headers=headers, timeout=10)
+        res = requests.get(api_url, headers=headers, timeout=10)
+        
+        # ตรวจสอบสถานะ HTTP Status Code
+        if res.status_code != 200:
+            print(f"Menu {menu_id}: HTTP Error {res.status_code} - Body: {res.text[:100]}", flush=True)
+            return []
+
         data = res.json()
         articles = data.get("message", {}).get("result", {}).get("articleList", [])
         return articles
     except Exception as e:
-        print(f"Error fetching menu {menu_id}: {e}", flush=True)
+        print(f"Menu {menu_id} Exception: {e}", flush=True)
         return []
 
 def send_to_discord(article, category):
