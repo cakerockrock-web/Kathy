@@ -114,7 +114,8 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/board/{board_id}/feed?limit=5&order=NEW"
+    # ปรับ URL ใหม่ให้ตรงกับสเปกของ Naver เป๊ะๆ ป้องกันบอทโดนเด้ง
+    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -124,6 +125,8 @@ def fetch_lounge_feeds(board_id):
         res = requests.get(api_url, headers=headers, timeout=10)
         if res.status_code == 200:
             return res.json().get("content", {}).get("feeds", [])
+        else:
+            print(f"Board {board_id} Failed: HTTP {res.status_code}", flush=True)
     except Exception as e:
         print(f"Board {board_id} Error: {e}", flush=True)
     return []
@@ -200,7 +203,7 @@ def send_to_discord(feed_summary, category):
             "embeds": batch
         }
         resp = requests.post(WEBHOOK_URL, json=payload)
-        print(f"Sent batch {i//batch_size + 1} - Status: {resp.status_code}", flush=True)
+        print(f"Sent batch {i//batch_size + 1} for ID {feed_id} - Status: {resp.status_code}", flush=True)
 
 def run():
     if not WEBHOOK_URL:
@@ -212,8 +215,10 @@ def run():
 
     for cat in CATEGORIES:
         board_id = cat["board_id"]
+        print(f"--- Checking Board {board_id} ---", flush=True)
         feeds = fetch_lounge_feeds(board_id)
         if not feeds:
+            print(f"Board {board_id}: No feeds returned. API limit or Empty.", flush=True)
             continue
 
         saved_id = str(last_ids.get(board_id, ""))
@@ -222,7 +227,7 @@ def run():
         if not saved_id:
             last_ids[board_id] = latest_id
             updated = True
-            print(f"Board {board_id}: Initialized latest ID to {latest_id}", flush=True)
+            print(f"Board {board_id}: Initialized ID to {latest_id}", flush=True)
             continue
 
         new_posts = []
@@ -233,7 +238,7 @@ def run():
             new_posts.append(feed)
 
         if new_posts:
-            print(f"Board {board_id}: Found {len(new_posts)} new posts. Sending...", flush=True)
+            print(f"Board {board_id}: Found {len(new_posts)} new posts. Sending to Discord...", flush=True)
             for post in reversed(new_posts):
                 send_to_discord(post, cat)
             last_ids[board_id] = latest_id
@@ -243,6 +248,7 @@ def run():
 
     if updated:
         save_last_ids(last_ids)
+        print("Saved new IDs to last_ids.json", flush=True)
 
 if __name__ == "__main__":
     run()
