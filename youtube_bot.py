@@ -9,15 +9,9 @@ STORAGE_FILE = "last_youtube_videos.json"
 # --- ⚙️ กำหนดช่อง YouTube และห้อง Discord ---
 YOUTUBE_CHANNELS = [
     {
-        "name": "Epidgames",
-        # ตรวจสอบให้แน่ใจว่าด้านหลัง channel_id= เป็นรหัสช่องที่ขึ้นต้นด้วย UC...
-        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=ใส่_Channel_ID_ช่องแรก_ตรงนี้",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องแรก"
-    },
-    {
-        "name": "ช่องที่ 2",
-        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=ใส่_Channel_ID_ช่องที่สอง_ตรงนี้",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่สอง"
+        "name": "EPIDGames",
+        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCI37oS0O5OlmQNeiyIywEAQ",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องนี้"
     }
 ]
 
@@ -72,7 +66,6 @@ def run():
 
         saved_video_id = last_videos.get(feed_url)
 
-        # ถ้าเป็นคลิปใหม่ หรือเพิ่งรันเป็นครั้งแรก ให้ส่งแจ้งเตือนทันที
         if video_id != saved_video_id:
             print(f"New video found for {name}: {video_title}", flush=True)
             last_videos[feed_url] = video_id
