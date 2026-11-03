@@ -10,16 +10,15 @@ CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
 CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
 STORAGE_FILE = "last_ids.json"
 
-# กำหนดสีและชื่อหมวดตามบอร์ดต้นทางของโพสต์
-BOARD_METADATA = {
-    "8": {"name": "공지사항 (ประกาศอัปเดต)", "color": 0x3498DB},
-    "11": {"name": "이벤트 (คูปอง /กิจกรรม)", "color": 0xF1C40F},
-    "31": {"name": "개발자 노트 (Dev Note)", "color": 0x9E6649},
-    "default": {"name": "공지사항", "color": 0x2ECC71}
-}
-
-# ติดตามบอร์ดรวมข่าวทางการ (Board 13)
+# ติดตามบอร์ดรวมประกาศหลัก (Board 13)
 TARGET_BOARD_ID = "13"
+
+# แยกเฉพาะหมวดพิเศษ ส่วนประกาศทั่วไปและบอร์ด 8 จะใช้ค่า default
+BOARD_METADATA = {
+    "11": {"name": "이벤트 (คูปอง / กิจกรรม)", "color": 0xF1C40F},
+    "31": {"name": "개발자 노트 (Dev Note)", "color": 0x9E6649},
+    "default": {"name": "공지사항 (ประกาศอัปเดต)", "color": 0x3498DB}
+}
 
 def load_last_ids():
     if os.path.exists(STORAGE_FILE):
@@ -205,7 +204,6 @@ def send_to_discord(feed_summary, origin_board_id):
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # กรองคูปองแยกห้อง
     if "쿠폰" in title:
         route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
         send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
@@ -267,7 +265,6 @@ def run():
     else:
         seen_ids = list(raw_seen)
 
-    # รันครั้งแรกสุดจำโพสต์ปัจจุบันทั้งหมดไว้ก่อน เพื่อไม่ให้ยิงรัว
     if not seen_ids:
         last_ids[TARGET_BOARD_ID] = [str(f.get("feedId")) for f in feeds]
         save_last_ids(last_ids)
@@ -281,16 +278,15 @@ def run():
         if f_id not in seen_ids:
             new_posts.append(feed)
 
+    # ปรับให้โหมดทดสอบดึง 3 โพสต์ล่าสุด
     if is_test_mode and new_posts: 
-        new_posts = [new_posts[0]]
+        new_posts = new_posts[:3]
         seen_ids = [x for x in seen_ids if x != "0"]
 
     if new_posts:
-        # จำกัดการส่งรอบละไม่เกิน 3 โพสต์
         posts_to_send = new_posts[:3]
 
         for post in reversed(posts_to_send): 
-            # ดึง boardId ดั้งเดิมของเนื้อหาเพื่อเลือกสีและชื่อหมวดให้ถูกต้อง
             origin_board = str(post.get("boardId") or (post.get("board") or {}).get("boardId") or "")
             send_to_discord(post, origin_board)
 
