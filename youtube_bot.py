@@ -6,17 +6,18 @@ import feedparser
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 STORAGE_FILE = "last_youtube_videos.json"
 
-# --- ⚙️ กำหนดช่อง YouTube และแยกห้อง Discord ของใครของมันตรงนี้ ---
+# --- ⚙️ กำหนดช่อง YouTube และห้อง Discord ---
 YOUTUBE_CHANNELS = [
     {
-        "name": "ช่องที่ 1",
-        "feed_url": "https://www.youtube.com/@aljazeeraenglish",
-        "discord_channel_id": "1566895972859121885"
+        "name": "Epidgames",
+        # ตรวจสอบให้แน่ใจว่าด้านหลัง channel_id= เป็นรหัสช่องที่ขึ้นต้นด้วย UC...
+        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=ใส่_Channel_ID_ช่องแรก_ตรงนี้",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องแรก"
     },
     {
         "name": "ช่องที่ 2",
-        "feed_url": "https://www.youtube.com/@Patima_KR",
-        "discord_channel_id": "1566904623304810547"
+        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=ใส่_Channel_ID_ช่องที่สอง_ตรงนี้",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่สอง"
     }
 ]
 
@@ -35,44 +36,47 @@ def save_last_videos(data):
 
 def send_to_discord(payload, target_channel):
     if not target_channel:
+        print("No target channel ID provided", flush=True)
         return
     url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
     headers = {
         "Authorization": f"Bot {BOT_TOKEN}",
         "Content-Type": "application/json"
     }
-    requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=headers, json=payload)
+    print(f"Sent to Discord: Status Code {response.status_code}", flush=True)
 
 def run():
     if not BOT_TOKEN:
-        print("Missing BOT_TOKEN", flush=True)
+        print("Error: Missing DISCORD_BOT_TOKEN in Secrets", flush=True)
         return
 
     last_videos = load_last_videos()
     updated = False
 
     for item in YOUTUBE_CHANNELS:
+        name = item["name"]
         feed_url = item["feed_url"]
         target_discord_channel_id = item["discord_channel_id"]
         
         feed = feedparser.parse(feed_url)
         if not feed.entries:
+            print(f"Warning: No entries found for {name} (URL: {feed_url})", flush=True)
             continue
 
         latest_entry = feed.entries[0]
         video_id = latest_entry.get("yt_videoid") or latest_entry.get("id")
         video_title = latest_entry.get("title")
         video_link = latest_entry.get("link")
-        author_name = latest_entry.get("author", "YouTube Channel")
+        author_name = latest_entry.get("author", name)
 
         saved_video_id = last_videos.get(feed_url)
 
+        # ถ้าเป็นคลิปใหม่ หรือเพิ่งรันเป็นครั้งแรก ให้ส่งแจ้งเตือนทันที
         if video_id != saved_video_id:
+            print(f"New video found for {name}: {video_title}", flush=True)
             last_videos[feed_url] = video_id
             updated = True
-
-            if not saved_video_id:
-                continue
 
             embed = {
                 "title": f"🎬 มีคลิปใหม่จาก {author_name}!",
@@ -98,8 +102,9 @@ def run():
                 }]
             }
             
-            # ส่งไปยังห้อง Discord เฉพาะของช่องนั้นๆ
             send_to_discord(payload, target_discord_channel_id)
+        else:
+            print(f"No new video for {name}", flush=True)
 
     if updated:
         save_last_videos(last_videos)
