@@ -49,7 +49,7 @@ def run():
     last_videos = load_last_videos()
     updated = False
 
-    # กำหนด User-Agent เพื่อไม่ให้ YouTube บล็อกการเข้าถึงจาก GitHub Actions
+    # กำหนด User-Agent เพื่อไม่ให้ YouTube บล็อกคำขอจาก GitHub Actions
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -70,12 +70,11 @@ def run():
             print(f"Warning: No entries found for {name} (URL: {feed_url})", flush=True)
             continue
 
-        # ดึงประวัติคลิปที่เคยบันทึกไว้สำหรับช่องนี้ (เก็บเป็น List ของ ID)
         seen_ids = last_videos.get(feed_url, [])
         if isinstance(seen_ids, str):
             seen_ids = [seen_ids]
 
-        # วนลูปส่งคลิปจากเก่าไปหาใหม่
+        # วนลูปส่งคลิปทั้งหมดที่ยังไม่มีในประวัติ
         for entry in reversed(feed.entries):
             video_id = entry.get("yt_videoid") or entry.get("id")
             video_title = entry.get("title")
@@ -112,7 +111,7 @@ def run():
                 }
 
                 send_to_discord(payload, target_discord_channel_id)
-                time.sleep(1)  # หน่วงเวลา 1 วินาทีต่อคลิป ป้องกันติดข้อจำกัดอัตราการส่งของ Discord (Rate Limit)
+                time.sleep(1)
 
         last_videos[feed_url] = seen_ids
 
