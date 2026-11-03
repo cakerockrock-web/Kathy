@@ -96,12 +96,32 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=5&offset=0&order=NEW"
+    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=10&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
     try:
         res = requests.get(api_url, headers=headers, timeout=10)
-        if res.status_code == 200: return res.json().get("content", {}).get("feeds", [])
-    except: pass
+        if res.status_code == 200:
+            content = res.json().get("content", {})
+            notice_feeds = content.get("noticeFeeds") or []
+            normal_feeds = content.get("feeds") or []
+            combined = notice_feeds + normal_feeds
+
+            seen_ids = set()
+            unique_feeds = []
+            for feed in combined:
+                fid = str(feed.get("feedId"))
+
+                # ตรวจสอบว่าโพสต์นี้ตรงกับบอร์ดปัจจุบันหรือไม่ ป้องกันหมุดข้ามห้องมาปน
+                feed_board = str(feed.get("boardId") or (feed.get("board") or {}).get("boardId") or "")
+                if feed_board and feed_board != str(board_id):
+                    continue
+
+                if fid not in seen_ids:
+                    seen_ids.add(fid)
+                    unique_feeds.append(feed)
+            return unique_feeds
+    except Exception as e:
+        print(f"Error fetching feeds for board {board_id}: {e}", flush=True)
     return []
 
 def send_to_discord_bot(payload, target_channel):
@@ -237,30 +257,47 @@ def run():
         feeds = fetch_lounge_feeds(board_id)
         if not feeds: continue
 
-        saved_id = str(last_ids.get(board_id, ""))
-        latest_id = str(feeds[0].get("feedId"))
+        raw_seen = last_ids.get(board_id, [])
+        if isinstance(raw_seen, str):
+            seen_ids = [raw_seen] if raw_seen else []
+        else:
+            seen_ids = list(raw_seen)
 
-        if not saved_id:
-            last_ids[board_id] = latest_id
+        # จำโพสต์ปัจจุบันทั้งหมดในครั้งแรกเพื่อกันสแปม
+        if not seen_ids:
+            last_ids[board_id] = [str(f.get("feedId")) for f in feeds]
             updated = True
             continue
 
+        is_test_mode = "0" in seen_ids
+
+        # หาโพสต์ใหม่ที่ยังไม่เคยมี ID ในประวัติของหมวดนี้
         new_posts = []
         for feed in feeds:
             f_id = str(feed.get("feedId"))
-            if f_id == saved_id: break
-            new_posts.append(feed)
+            if f_id not in seen_ids:
+                new_posts.append(feed)
 
-        if saved_id == "0" and new_posts: 
+        if is_test_mode and new_posts: 
             new_posts = [new_posts[0]]
+            seen_ids = [x for x in seen_ids if x != "0"]
 
         if new_posts:
-            for post in reversed(new_posts): 
+            posts_to_send = new_posts[:3]
+
+            for post in reversed(posts_to_send): 
                 send_to_discord(post, cat)
-            last_ids[board_id] = latest_id
+
+            for f in feeds:
+                fid = str(f.get("feedId"))
+                if fid not in seen_ids:
+                    seen_ids.append(fid)
+
+            last_ids[board_id] = seen_ids[-50:]
             updated = True
 
-    if updated: save_last_ids(last_ids)
+    if updated: 
+        save_last_ids(last_ids)
 
 if __name__ == "__main__":
     run()
