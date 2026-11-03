@@ -7,14 +7,30 @@ import requests
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 STORAGE_FILE = "last_youtube_videos.json"
 
-# --- ⚙️ กำหนดช่อง YouTube และห้อง Discord ---
-# หากต้องการแท็กยศ ให้ใส่ ID ยศใน "role_id": "ตัวเลขยศ" (ถ้าไม่แท็กให้ปล่อยเป็น None)
+# ==========================================
+# ⚙️ ตั้งค่าช่อง YouTube และห้อง Discord ตรงนี้
+# ==========================================
 YOUTUBE_CHANNELS = [
+    # --- ช่องที่ 1 ---
     {
         "name": "EPID Games",
         "channel_url": "https://www.youtube.com/@epidgames6350/videos",
-        "discord_channel_id": "1440393996739547310",
-        "role_id": None  # ตัวอย่างถ้ามียศ: "123456789012345678"
+        "discord_channel_id": "1566895972859121885",
+        "role_id": None  # ถ้าต้องการแท็กยศ ให้ใส่ ID ยศ เช่น "123456789012345678"
+    },
+    # --- ช่องที่ 2 ---
+    {
+        "name": "ใส่ชื่อช่องที่ 2",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/videos",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_2",
+        "role_id": None
+    },
+    # --- ช่องที่ 3 ---
+    {
+        "name": "ใส่ชื่อช่องที่ 3",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม/videos",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_3",
+        "role_id": None
     }
 ]
 
@@ -32,29 +48,27 @@ def save_last_videos(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def send_to_discord(content_text, target_channel):
-    if not target_channel:
-        print("No target channel ID provided", flush=True)
+    if not target_channel or not str(target_channel).isdigit():
+        print(f"Skipped sending: Invalid target channel ID ({target_channel})", flush=True)
         return
     url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
     headers = {
         "Authorization": f"Bot {BOT_TOKEN}",
         "Content-Type": "application/json"
     }
-    payload = {
-        "content": content_text
-    }
+    payload = {"content": content_text}
     response = requests.post(url, headers=headers, json=payload)
-    print(f"Sent to Discord: Status Code {response.status_code}", flush=True)
+    print(f"Sent to Discord ({target_channel}): Status Code {response.status_code}", flush=True)
 
 def fetch_latest_videos(channel_url, headers):
     try:
         res = requests.get(channel_url, headers=headers, timeout=15)
         if res.status_code != 200:
-            print(f"Failed to fetch page. Status: {res.status_code}", flush=True)
+            print(f"Failed to fetch page ({channel_url}). Status: {res.status_code}", flush=True)
             return []
 
-        # สกัด ID คลิปเฉพาะจากวิดีโอที่เป็นทางการ
-        video_ids = re.findall(r'/watch\?v=([a-zA-Z0-9_-]{11})', res.text)
+        # ดักจับทั้งลิงก์คลิปยาว (/watch?v=) และ Shorts (/shorts/)
+        video_ids = re.findall(r'/(?:watch\?v=|shorts/)([a-zA-Z0-9_-]{11})', res.text)
         
         seen = set()
         ordered_ids = []
@@ -93,6 +107,10 @@ def run():
         target_discord_channel_id = item["discord_channel_id"]
         role_id = item.get("role_id")
 
+        # ระบบป้องกัน error: ข้ามช่องที่ยังไม่ได้ใส่ข้อมูลจริง
+        if "ชื่อช่อง" in channel_url or not str(target_discord_channel_id).isdigit():
+            continue
+
         videos = fetch_latest_videos(channel_url, headers)
         print(f"[{name}] Found {len(videos)} videos on page", flush=True)
 
@@ -100,11 +118,10 @@ def run():
             print(f"Warning: No videos parsed for {name}", flush=True)
             continue
 
-        seen_ids = last_videos.get(name, [])
+        seen_ids = last_videos.get(channel_url, [])
         if isinstance(seen_ids, str):
             seen_ids = [seen_ids]
 
-        # เลือก 5 คลิปแรก แล้วตรวจส่ง
         recent_videos = videos[:5]
 
         for video in reversed(recent_videos):
@@ -116,7 +133,6 @@ def run():
                 seen_ids.append(video_id)
                 updated = True
 
-                # จัดข้อความแบบรูปทางซ้าย: แท็กยศ/ชื่อช่อง แล้วตามด้วยบรรทัดลิงก์
                 if role_id:
                     mention = f"<@&{role_id}> **{name}**"
                 else:
@@ -127,7 +143,7 @@ def run():
                 send_to_discord(message_text, target_discord_channel_id)
                 time.sleep(1)
 
-        last_videos[name] = seen_ids
+        last_videos[channel_url] = seen_ids
 
     if updated:
         save_last_videos(last_videos)
