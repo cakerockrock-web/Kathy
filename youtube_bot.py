@@ -6,6 +6,7 @@ import requests
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 STORAGE_FILE = "last_youtube_videos.json"
+MAX_SEND_PER_RUN = 3  # จำกัดให้ส่งสูงสุดรอบละไม่เกิน 3 คลิปต่อช่อง
 
 # ==========================================
 # ⚙️ กำหนดช่อง YouTube และห้อง Discord ทั้ง 3 ช่อง
@@ -88,7 +89,6 @@ def fetch_latest_videos(channel_url, headers):
             print(f"Failed to fetch {channel_url}. Status: {res.status_code}", flush=True)
             return []
 
-        # ดักจับแพตเทิร์นรหัสคลิปทั้งแบบคลิปยาวและ Shorts
         if "/shorts" in channel_url:
             patterns = [
                 r'(?:/shorts/|\\/shorts/)([a-zA-Z0-9_-]{11})',
@@ -114,7 +114,7 @@ def fetch_latest_videos(channel_url, headers):
                 ordered_ids.append(vid)
 
         videos = []
-        for v_id in ordered_ids[:5]:
+        for v_id in ordered_ids[:10]:
             videos.append({
                 "id": v_id,
                 "link": f"https://youtu.be/{v_id}"
@@ -143,7 +143,6 @@ def run():
         target_discord_channel_id = item["discord_channel_id"]
         role_id = item.get("role_id")
 
-        # ข้ามช่องตัวอย่างที่ยังไม่ได้ใส่ URL หรือ ID ห้องจริง
         if "ชื่อช่อง" in channel_url or not str(target_discord_channel_id).isdigit():
             continue
 
@@ -158,16 +157,19 @@ def run():
         if isinstance(seen_ids, str):
             seen_ids = [seen_ids]
 
-        recent_videos = videos[:5]
+        # หาเฉพาะคลิปใหม่ที่ยังไม่เคยมีในประวัติ
+        new_videos = [v for v in videos if v["id"] not in seen_ids]
 
-        for video in reversed(recent_videos):
-            video_id = video["id"]
-            video_link = video["link"]
+        if new_videos:
+            # เลือกส่งเฉพาะคลิปใหม่ล่าสุดสูงสุดไม่เกิน MAX_SEND_PER_RUN (3 คลิป)
+            videos_to_send = new_videos[:MAX_SEND_PER_RUN]
 
-            if video_id not in seen_ids:
+            # วนส่งเรียงจากคลิปเก่าไปหาคลิปใหม่
+            for video in reversed(videos_to_send):
+                video_id = video["id"]
+                video_link = video["link"]
+
                 print(f"Sending video for {name}: {video_id}", flush=True)
-                seen_ids.append(video_id)
-                updated = True
 
                 if role_id:
                     mention = f"<@&{role_id}> **{name}**"
@@ -175,11 +177,16 @@ def run():
                     mention = f"**{name}**"
 
                 message_text = f"{mention}\n{video_link}"
-
                 send_to_discord(message_text, target_discord_channel_id)
                 time.sleep(1)
 
-        last_videos[channel_url] = seen_ids
+            # อัปเดตเก็บรหัสคลิปที่พบบนหน้าเว็บทั้งหมดทันที ป้องกันคลิปที่เหลือไหลมาส่งซ้ำรอบหน้า
+            for v in videos:
+                if v["id"] not in seen_ids:
+                    seen_ids.append(v["id"])
+
+            last_videos[channel_url] = seen_ids
+            updated = True
 
     if updated:
         save_last_videos(last_videos)
