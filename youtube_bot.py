@@ -16,14 +16,14 @@ YOUTUBE_CHANNELS = [
     {
         "name": "EPID Games",
         "channel_url": "https://www.youtube.com/@epidgames6350/videos",
-        "discord_channel_id": "1440393996739547310",
+        "discord_channel_id": "1566895972859121885",
         "role_id": None
     },
     # --- ช่องที่ 1: EPID Games (คลิป Shorts) ---
     {
         "name": "EPID Games (Shorts)",
         "channel_url": "https://www.youtube.com/@epidgames6350/shorts",
-        "discord_channel_id": "1440393996739547310",
+        "discord_channel_id": "1566895972859121885",
         "role_id": None
     },
 
