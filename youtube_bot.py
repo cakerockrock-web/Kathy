@@ -35,7 +35,7 @@ YOUTUBE_CHANNELS = [
         "role_id": None
     },
     {
-        "name": "Trickcal: Chibi Go",
+        "name": "Trickcal: Chibi Go (Shorts)",
         "channel_url": "https://www.youtube.com/@trickcal_en/shorts",
         "discord_channel_id": "1440393394705797211",
         "role_id": None
@@ -49,7 +49,7 @@ YOUTUBE_CHANNELS = [
         "role_id": None
     },
     {
-        "name": "ชื่อช่องที่ 3 (Shorts)",
+        "name": "Trickcal Patima (Shorts)",
         "channel_url": "https://www.youtube.com/@Patima_KR/shorts",
         "discord_channel_id": "1566748540133318737",
         "role_id": None
