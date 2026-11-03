@@ -8,27 +8,48 @@ BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 STORAGE_FILE = "last_youtube_videos.json"
 
 # ==========================================
-# ⚙️ ตั้งค่าช่อง YouTube และห้อง Discord
+# ⚙️ กำหนดช่อง YouTube และห้อง Discord ทั้ง 3 ช่อง
 # ==========================================
 YOUTUBE_CHANNELS = [
-    # ช่องที่ 1: EPID Games (ใส่ลิงก์หน้าช่องหลัก ไม่ต้องใส่ /videos หรือ /shorts แล้ว)
+    # --- ช่องที่ 1: EPID Games (คลิปปกติ) ---
     {
         "name": "EPID Games",
-        "channel_url": "https://www.youtube.com/@epidgames6350",
+        "channel_url": "https://www.youtube.com/@epidgames6350/videos",
         "discord_channel_id": "1566895972859121885",
         "role_id": None
     },
-    # ช่องที่ 2:
+    # --- ช่องที่ 1: EPID Games (คลิป Shorts) ---
     {
-        "name": "ใส่ชื่อช่องที่ 2",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง",
+        "name": "EPID Games (Shorts)",
+        "channel_url": "https://www.youtube.com/@epidgames6350/shorts",
+        "discord_channel_id": "1566895972859121885",
+        "role_id": None
+    },
+
+    # --- ช่องที่ 2: ระบุชื่อและลิงก์ของช่องที่ 2 ---
+    {
+        "name": "ชื่อช่องที่ 2",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/videos",
         "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_2",
         "role_id": None
     },
-    # ช่องที่ 3:
     {
-        "name": "ใส่ชื่อช่องที่ 3",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม",
+        "name": "ชื่อช่องที่ 2 (Shorts)",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/shorts",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_2",
+        "role_id": None
+    },
+
+    # --- ช่องที่ 3: ระบุชื่อและลิงก์ของช่องที่ 3 ---
+    {
+        "name": "ชื่อช่องที่ 3",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม/videos",
+        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_3",
+        "role_id": None
+    },
+    {
+        "name": "ชื่อช่องที่ 3 (Shorts)",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม/shorts",
         "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_3",
         "role_id": None
     }
@@ -61,44 +82,47 @@ def send_to_discord(content_text, target_channel):
     print(f"Sent to Discord ({target_channel}): Status Code {response.status_code}", flush=True)
 
 def fetch_latest_videos(channel_url, headers):
-    target_urls = [
-        channel_url.rstrip("/") + "/videos",
-        channel_url.rstrip("/") + "/shorts"
-    ]
-    
-    found_ids = []
-    seen = set()
+    try:
+        res = requests.get(channel_url, headers=headers, timeout=15)
+        if res.status_code != 200:
+            print(f"Failed to fetch {channel_url}. Status: {res.status_code}", flush=True)
+            return []
 
-    for url in target_urls:
-        try:
-            res = requests.get(url, headers=headers, timeout=15)
-            if res.status_code != 200:
-                continue
-
-            # ดึง ID คลิปทั้งแบบปกติและ Shorts จาก JSON ภายในหน้าเว็บ
+        # ดักจับแพตเทิร์นรหัสคลิปทั้งแบบคลิปยาวและ Shorts
+        if "/shorts" in channel_url:
             patterns = [
-                r'"videoId":"([a-zA-Z0-9_-]{11})"',
-                r'/watch\?v=([a-zA-Z0-9_-]{11})',
-                r'/shorts/([a-zA-Z0-9_-]{11})'
+                r'(?:/shorts/|\\/shorts/)([a-zA-Z0-9_-]{11})',
+                r'"videoId":"([a-zA-Z0-9_-]{11})"'
+            ]
+        else:
+            patterns = [
+                r'(?:/watch\?v=|\\/watch\?v=)([a-zA-Z0-9_-]{11})',
+                r'"videoId":"([a-zA-Z0-9_-]{11})"'
             ]
 
-            for pattern in patterns:
-                matches = re.findall(pattern, res.text)
-                for v_id in matches:
-                    if v_id not in seen:
-                        seen.add(v_id)
-                        found_ids.append(v_id)
-        except Exception as e:
-            print(f"Error fetching {url}: {e}", flush=True)
+        video_ids = []
+        for pattern in patterns:
+            matches = re.findall(pattern, res.text)
+            if matches:
+                video_ids.extend(matches)
 
-    videos = []
-    # จำกัดจำนวนคลิปล่าสุดที่สกัดได้
-    for v_id in found_ids[:10]:
-        videos.append({
-            "id": v_id,
-            "link": f"https://youtu.be/{v_id}"
-        })
-    return videos
+        seen = set()
+        ordered_ids = []
+        for vid in video_ids:
+            if vid not in seen:
+                seen.add(vid)
+                ordered_ids.append(vid)
+
+        videos = []
+        for v_id in ordered_ids[:5]:
+            videos.append({
+                "id": v_id,
+                "link": f"https://youtu.be/{v_id}"
+            })
+        return videos
+    except Exception as e:
+        print(f"Error fetching videos: {e}", flush=True)
+        return []
 
 def run():
     if not BOT_TOKEN:
@@ -119,14 +143,15 @@ def run():
         target_discord_channel_id = item["discord_channel_id"]
         role_id = item.get("role_id")
 
+        # ข้ามช่องตัวอย่างที่ยังไม่ได้ใส่ URL หรือ ID ห้องจริง
         if "ชื่อช่อง" in channel_url or not str(target_discord_channel_id).isdigit():
             continue
 
         videos = fetch_latest_videos(channel_url, headers)
-        print(f"[{name}] Found {len(videos)} videos/shorts on page", flush=True)
+        print(f"[{name}] Found {len(videos)} items on page", flush=True)
 
         if not videos:
-            print(f"Warning: No videos parsed for {name}", flush=True)
+            print(f"Warning: No items parsed for {name}", flush=True)
             continue
 
         seen_ids = last_videos.get(channel_url, [])
