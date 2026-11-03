@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import requests
 import feedparser
 
@@ -11,7 +12,7 @@ YOUTUBE_CHANNELS = [
     {
         "name": "EPIDGames",
         "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCI37oS0O5OlmQNeiyIywEAQ",
-        "discord_channel_id": "1440393996739547310"
+        "discord_channel_id": "1566895972859121885"
     }
 ]
 
@@ -48,56 +49,72 @@ def run():
     last_videos = load_last_videos()
     updated = False
 
+    # กำหนด User-Agent เพื่อไม่ให้ YouTube บล็อกการเข้าถึงจาก GitHub Actions
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     for item in YOUTUBE_CHANNELS:
         name = item["name"]
         feed_url = item["feed_url"]
         target_discord_channel_id = item["discord_channel_id"]
-        
-        feed = feedparser.parse(feed_url)
+
+        try:
+            res = requests.get(feed_url, headers=headers, timeout=15)
+            feed = feedparser.parse(res.content)
+        except Exception as e:
+            print(f"Error fetching feed for {name}: {e}", flush=True)
+            continue
+
         if not feed.entries:
             print(f"Warning: No entries found for {name} (URL: {feed_url})", flush=True)
             continue
 
-        latest_entry = feed.entries[0]
-        video_id = latest_entry.get("yt_videoid") or latest_entry.get("id")
-        video_title = latest_entry.get("title")
-        video_link = latest_entry.get("link")
-        author_name = latest_entry.get("author", name)
+        # ดึงประวัติคลิปที่เคยบันทึกไว้สำหรับช่องนี้ (เก็บเป็น List ของ ID)
+        seen_ids = last_videos.get(feed_url, [])
+        if isinstance(seen_ids, str):
+            seen_ids = [seen_ids]
 
-        saved_video_id = last_videos.get(feed_url)
+        # วนลูปส่งคลิปจากเก่าไปหาใหม่
+        for entry in reversed(feed.entries):
+            video_id = entry.get("yt_videoid") or entry.get("id")
+            video_title = entry.get("title")
+            video_link = entry.get("link")
+            author_name = entry.get("author", name)
 
-        if video_id != saved_video_id:
-            print(f"New video found for {name}: {video_title}", flush=True)
-            last_videos[feed_url] = video_id
-            updated = True
+            if video_id not in seen_ids:
+                print(f"Sending video for {name}: {video_title}", flush=True)
+                seen_ids.append(video_id)
+                updated = True
 
-            embed = {
-                "title": f"🎬 มีคลิปใหม่จาก {author_name}!",
-                "description": f"**{video_title}**",
-                "color": 0xFF0000,
-                "fields": [
-                    {"name": "รับชมคลิปได้ที่นี่", "value": video_link, "inline": False}
-                ],
-                "footer": {"text": "YouTube Notifier 🍬"}
-            }
-            
-            payload = {
-                "embeds": [embed],
-                "components": [{
-                    "type": 1,
+                embed = {
+                    "title": f"🎬 มีคลิปใหม่จาก {author_name}!",
+                    "description": f"**{video_title}**",
+                    "color": 0xFF0000,
+                    "fields": [
+                        {"name": "รับชมคลิปได้ที่นี่", "value": video_link, "inline": False}
+                    ],
+                    "footer": {"text": "YouTube Notifier 🍬"}
+                }
+
+                payload = {
+                    "embeds": [embed],
                     "components": [{
-                        "type": 2, 
-                        "style": 5, 
-                        "label": " ไปที่ YouTube", 
-                        "url": video_link, 
-                        "emoji": {"name": "▶️"}
+                        "type": 1,
+                        "components": [{
+                            "type": 2,
+                            "style": 5,
+                            "label": " ไปที่ YouTube",
+                            "url": video_link,
+                            "emoji": {"name": "▶️"}
+                        }]
                     }]
-                }]
-            }
-            
-            send_to_discord(payload, target_discord_channel_id)
-        else:
-            print(f"No new video for {name}", flush=True)
+                }
+
+                send_to_discord(payload, target_discord_channel_id)
+                time.sleep(1)  # หน่วงเวลา 1 วินาทีต่อคลิป ป้องกันติดข้อจำกัดอัตราการส่งของ Discord (Rate Limit)
+
+        last_videos[feed_url] = seen_ids
 
     if updated:
         save_last_videos(last_videos)
