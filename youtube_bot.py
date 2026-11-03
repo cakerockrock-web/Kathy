@@ -43,9 +43,9 @@ YOUTUBE_CHANNELS = [
 
     # --- ช่องที่ 3: ระบุชื่อและลิงก์ของช่องที่ 3 ---
     {
-        "name": "ชื่อช่องที่ 3",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม/videos",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_3",
+        "name": "Trickcal Patima",
+        "channel_url": "https://www.youtube.com/@Patima_KR/videos",
+        "discord_channel_id": "1566904623304810547",
         "role_id": None
     },
     {
