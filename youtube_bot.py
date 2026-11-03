@@ -8,27 +8,27 @@ BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 STORAGE_FILE = "last_youtube_videos.json"
 
 # ==========================================
-# ⚙️ ตั้งค่าช่อง YouTube และห้อง Discord ตรงนี้
+# ⚙️ ตั้งค่าช่อง YouTube และห้อง Discord
 # ==========================================
 YOUTUBE_CHANNELS = [
-    # --- ช่องที่ 1 ---
+    # ช่องที่ 1: EPID Games (ใส่ลิงก์หน้าช่องหลัก ไม่ต้องใส่ /videos หรือ /shorts แล้ว)
     {
         "name": "EPID Games",
-        "channel_url": "https://www.youtube.com/@epidgames6350/videos",
+        "channel_url": "https://www.youtube.com/@epidgames6350",
         "discord_channel_id": "1566895972859121885",
-        "role_id": None  # ถ้าต้องการแท็กยศ ให้ใส่ ID ยศ เช่น "123456789012345678"
+        "role_id": None
     },
-    # --- ช่องที่ 2 ---
+    # ช่องที่ 2:
     {
         "name": "ใส่ชื่อช่องที่ 2",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/videos",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง",
         "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_2",
         "role_id": None
     },
-    # --- ช่องที่ 3 ---
+    # ช่องที่ 3:
     {
         "name": "ใส่ชื่อช่องที่ 3",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม/videos",
+        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม",
         "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_3",
         "role_id": None
     }
@@ -61,32 +61,44 @@ def send_to_discord(content_text, target_channel):
     print(f"Sent to Discord ({target_channel}): Status Code {response.status_code}", flush=True)
 
 def fetch_latest_videos(channel_url, headers):
-    try:
-        res = requests.get(channel_url, headers=headers, timeout=15)
-        if res.status_code != 200:
-            print(f"Failed to fetch page ({channel_url}). Status: {res.status_code}", flush=True)
-            return []
+    target_urls = [
+        channel_url.rstrip("/") + "/videos",
+        channel_url.rstrip("/") + "/shorts"
+    ]
+    
+    found_ids = []
+    seen = set()
 
-        # ดักจับทั้งลิงก์คลิปยาว (/watch?v=) และ Shorts (/shorts/)
-        video_ids = re.findall(r'/(?:watch\?v=|shorts/)([a-zA-Z0-9_-]{11})', res.text)
-        
-        seen = set()
-        ordered_ids = []
-        for vid in video_ids:
-            if vid not in seen:
-                seen.add(vid)
-                ordered_ids.append(vid)
+    for url in target_urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+            if res.status_code != 200:
+                continue
 
-        videos = []
-        for v_id in ordered_ids[:10]:
-            videos.append({
-                "id": v_id,
-                "link": f"https://youtu.be/{v_id}"
-            })
-        return videos
-    except Exception as e:
-        print(f"Error fetching videos: {e}", flush=True)
-        return []
+            # ดึง ID คลิปทั้งแบบปกติและ Shorts จาก JSON ภายในหน้าเว็บ
+            patterns = [
+                r'"videoId":"([a-zA-Z0-9_-]{11})"',
+                r'/watch\?v=([a-zA-Z0-9_-]{11})',
+                r'/shorts/([a-zA-Z0-9_-]{11})'
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, res.text)
+                for v_id in matches:
+                    if v_id not in seen:
+                        seen.add(v_id)
+                        found_ids.append(v_id)
+        except Exception as e:
+            print(f"Error fetching {url}: {e}", flush=True)
+
+    videos = []
+    # จำกัดจำนวนคลิปล่าสุดที่สกัดได้
+    for v_id in found_ids[:10]:
+        videos.append({
+            "id": v_id,
+            "link": f"https://youtu.be/{v_id}"
+        })
+    return videos
 
 def run():
     if not BOT_TOKEN:
@@ -107,12 +119,11 @@ def run():
         target_discord_channel_id = item["discord_channel_id"]
         role_id = item.get("role_id")
 
-        # ระบบป้องกัน error: ข้ามช่องที่ยังไม่ได้ใส่ข้อมูลจริง
         if "ชื่อช่อง" in channel_url or not str(target_discord_channel_id).isdigit():
             continue
 
         videos = fetch_latest_videos(channel_url, headers)
-        print(f"[{name}] Found {len(videos)} videos on page", flush=True)
+        print(f"[{name}] Found {len(videos)} videos/shorts on page", flush=True)
 
         if not videos:
             print(f"Warning: No videos parsed for {name}", flush=True)
