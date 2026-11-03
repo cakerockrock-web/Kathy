@@ -22,7 +22,7 @@ YOUTUBE_CHANNELS = [
     # --- ช่องที่ 1: EPID Games (คลิป Shorts) ---
     {
         "name": "EPID Games (Shorts)",
-        "channel_url": "https://www.youtube.com/@epidgames6350/shorts",
+        "channel_url": "https://www.youtube.com/@trickcal_en/videos",
         "discord_channel_id": "1440393996739547310",
         "role_id": None
     },
@@ -30,14 +30,14 @@ YOUTUBE_CHANNELS = [
     # --- ช่องที่ 2: ระบุชื่อและลิงก์ของช่องที่ 2 ---
     {
         "name": "ชื่อช่องที่ 2",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/videos",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_2",
+        "channel_url": "https://www.youtube.com/@trickcal_en/videos",
+        "discord_channel_id": "1566904623304810547",
         "role_id": None
     },
     {
         "name": "ชื่อช่องที่ 2 (Shorts)",
         "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/shorts",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_2",
+        "discord_channel_id": "1566904623304810547",
         "role_id": None
     },
 
