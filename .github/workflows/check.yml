@@ -1,38 +1,43 @@
-name: Check Cafe Notice
+name: Naver Lounge Notifier
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    - cron: '*/5 * * * *'  # ทำงานทุก 5 นาที
+  workflow_dispatch:        # กดปุ่มรันด้วยมือได้
+  push:
+    paths:
+      - 'main.py'           # หรือ 'naver_bot.py'
+      - 'last_ids.json'
+      - '.github/workflows/naver.yml'
 
 jobs:
-  run-checker:
+  check-naver:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install requests
+        run: |
+          pip install requests
 
-      - name: Run Script
+      - name: Run Naver Bot
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           DISCORD_CHANNEL_ID_COUPON: ${{ secrets.DISCORD_CHANNEL_ID_COUPON }}
-        run: python main.py
+        run: |
+          python main.py
 
       - name: Commit Last IDs
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add last_ids.json || true
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update last IDs" && git push)
+          git add last_ids.json
+          git commit -m "Update Naver IDs [skip ci]" || exit 0
+          git push
