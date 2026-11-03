@@ -49,9 +49,9 @@ def run():
     last_videos = load_last_videos()
     updated = False
 
-    # กำหนด User-Agent เพื่อไม่ให้ YouTube บล็อกคำขอจาก GitHub Actions
+    # กำหนด User-Agent ให้เสมือนการเปิดผ่านเว็บบราวเซอร์ปกติ
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
 
     for item in YOUTUBE_CHANNELS:
@@ -61,10 +61,13 @@ def run():
 
         try:
             res = requests.get(feed_url, headers=headers, timeout=15)
+            print(f"[{name}] Fetch Status: {res.status_code}, Length: {len(res.content)} bytes", flush=True)
             feed = feedparser.parse(res.content)
         except Exception as e:
             print(f"Error fetching feed for {name}: {e}", flush=True)
             continue
+
+        print(f"[{name}] Found entries: {len(feed.entries)}", flush=True)
 
         if not feed.entries:
             print(f"Warning: No entries found for {name} (URL: {feed_url})", flush=True)
@@ -74,7 +77,7 @@ def run():
         if isinstance(seen_ids, str):
             seen_ids = [seen_ids]
 
-        # วนลูปส่งคลิปทั้งหมดที่ยังไม่มีในประวัติ
+        # ตรวจสอบและส่งคลิปที่ยังไม่มีในประวัติ (วนจากคลิปเก่าไปหาคลิปใหม่)
         for entry in reversed(feed.entries):
             video_id = entry.get("yt_videoid") or entry.get("id")
             video_title = entry.get("title")
