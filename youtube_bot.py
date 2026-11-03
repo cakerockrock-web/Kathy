@@ -1,8 +1,8 @@
 import os
+import re
 import json
 import time
 import requests
-import feedparser
 
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 STORAGE_FILE = "last_youtube_videos.json"
@@ -11,7 +11,7 @@ STORAGE_FILE = "last_youtube_videos.json"
 YOUTUBE_CHANNELS = [
     {
         "name": "EPIDGames",
-        "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCI37oS0O5OlmQNeiyIywEAQ",
+        "channel_url": "https://www.youtube.com/@epidgames6350/videos",
         "discord_channel_id": "1566895972859121885"
     }
 ]
@@ -41,6 +41,31 @@ def send_to_discord(payload, target_channel):
     response = requests.post(url, headers=headers, json=payload)
     print(f"Sent to Discord: Status Code {response.status_code}", flush=True)
 
+def fetch_latest_videos(channel_url, headers):
+    try:
+        res = requests.get(channel_url, headers=headers, timeout=15)
+        if res.status_code != 200:
+            print(f"Failed to fetch page. Status: {res.status_code}", flush=True)
+            return []
+
+        # สกัด videoId และ title จากข้อมูล JSON ภายในหน้าเว็บ YouTube
+        matches = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})".*?"title":\{"runs":\[\{"text":"(.*?)"\}\]', res.text)
+        
+        videos = []
+        seen = set()
+        for v_id, title in matches:
+            if v_id not in seen:
+                seen.add(v_id)
+                videos.append({
+                    "id": v_id,
+                    "title": title.encode().decode('unicode-escape', 'ignore'),
+                    "link": f"https://www.youtube.com/watch?v={v_id}"
+                })
+        return videos
+    except Exception as e:
+        print(f"Error fetching videos: {e}", flush=True)
+        return []
+
 def run():
     if not BOT_TOKEN:
         print("Error: Missing DISCORD_BOT_TOKEN in Secrets", flush=True)
@@ -49,40 +74,34 @@ def run():
     last_videos = load_last_videos()
     updated = False
 
-    # กำหนด User-Agent เพื่อป้องกัน YouTube บล็อกการเข้าถึงจาก GitHub Actions
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
     }
 
     for item in YOUTUBE_CHANNELS:
         name = item["name"]
-        feed_url = item["feed_url"]
+        channel_url = item["channel_url"]
         target_discord_channel_id = item["discord_channel_id"]
 
-        try:
-            res = requests.get(feed_url, headers=headers, timeout=15)
-            print(f"[{name}] Fetch Status: {res.status_code}, Length: {len(res.content)} bytes", flush=True)
-            feed = feedparser.parse(res.content)
-        except Exception as e:
-            print(f"Error fetching feed for {name}: {e}", flush=True)
+        videos = fetch_latest_videos(channel_url, headers)
+        print(f"[{name}] Found {len(videos)} videos on page", flush=True)
+
+        if not videos:
+            print(f"Warning: No videos parsed for {name}", flush=True)
             continue
 
-        print(f"[{name}] Found entries: {len(feed.entries)}", flush=True)
-
-        if not feed.entries:
-            print(f"Warning: No entries found for {name} (URL: {feed_url})", flush=True)
-            continue
-
-        seen_ids = last_videos.get(feed_url, [])
+        seen_ids = last_videos.get(name, [])
         if isinstance(seen_ids, str):
             seen_ids = [seen_ids]
 
-        # วนลูปส่งคลิปทั้งหมดที่มีในฟีด
-        for entry in reversed(feed.entries):
-            video_id = entry.get("yt_videoid") or entry.get("id")
-            video_title = entry.get("title")
-            video_link = entry.get("link")
-            author_name = entry.get("author", name)
+        # เลือกดึง 10 คลิปแรกสุด แล้ววนส่งจากคลิปเก่าไปหาคลิปใหม่
+        recent_videos = videos[:10]
+
+        for video in reversed(recent_videos):
+            video_id = video["id"]
+            video_title = video["title"]
+            video_link = video["link"]
 
             if video_id not in seen_ids:
                 print(f"Sending video for {name}: {video_title}", flush=True)
@@ -90,7 +109,7 @@ def run():
                 updated = True
 
                 embed = {
-                    "title": f"🎬 มีคลิปใหม่จาก {author_name}!",
+                    "title": f"🎬 มีคลิปใหม่จาก {name}!",
                     "description": f"**{video_title}**",
                     "color": 0xFF0000,
                     "fields": [
@@ -116,7 +135,7 @@ def run():
                 send_to_discord(payload, target_discord_channel_id)
                 time.sleep(1)
 
-        last_videos[feed_url] = seen_ids
+        last_videos[name] = seen_ids
 
     if updated:
         save_last_videos(last_videos)
