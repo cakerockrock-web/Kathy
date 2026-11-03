@@ -22,7 +22,7 @@ YOUTUBE_CHANNELS = [
     # --- ช่องที่ 1: EPID Games (คลิป Shorts) ---
     {
         "name": "EPID Games (Shorts)",
-        "channel_url": "https://www.youtube.com/@trickcal_en/videos",
+        "channel_url": "https://www.youtube.com/@epidgames6350/shorts",
         "discord_channel_id": "1440393996739547310",
         "role_id": None
     },
