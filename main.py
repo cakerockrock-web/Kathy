@@ -10,11 +10,16 @@ CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
 CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
 STORAGE_FILE = "last_ids.json"
 
-CATEGORIES = [
-    {"board_id": "8", "name": "공지사항 (ประกาศอัปเดต)", "color": 0x3498DB},
-    {"board_id": "11", "name": "이벤트 (คูปอง /กิจกรรม)", "color": 0xF1C40F},
-    {"board_id": "31", "name": "개발자 노트 (Dev Note)", "color": 0x9E6649}
-]
+# กำหนดสีและชื่อหมวดตามบอร์ดต้นทางของโพสต์
+BOARD_METADATA = {
+    "8": {"name": "공지사항 (ประกาศอัปเดต)", "color": 0x3498DB},
+    "11": {"name": "이벤트 (คูปอง /กิจกรรม)", "color": 0xF1C40F},
+    "31": {"name": "개발자 노트 (Dev Note)", "color": 0x9E6649},
+    "default": {"name": "공지사항", "color": 0x2ECC71}
+}
+
+# ติดตามบอร์ดรวมข่าวทางการ (Board 13)
+TARGET_BOARD_ID = "13"
 
 def load_last_ids():
     if os.path.exists(STORAGE_FILE):
@@ -96,7 +101,7 @@ def fetch_feed_detail(feed_id):
     return None
 
 def fetch_lounge_feeds(board_id):
-    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=10&offset=0&order=NEW"
+    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=15&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
     try:
         res = requests.get(api_url, headers=headers, timeout=10)
@@ -110,18 +115,12 @@ def fetch_lounge_feeds(board_id):
             unique_feeds = []
             for feed in combined:
                 fid = str(feed.get("feedId"))
-
-                # ตรวจสอบว่าโพสต์นี้ตรงกับบอร์ดปัจจุบันหรือไม่ ป้องกันหมุดข้ามห้องมาปน
-                feed_board = str(feed.get("boardId") or (feed.get("board") or {}).get("boardId") or "")
-                if feed_board and feed_board != str(board_id):
-                    continue
-
                 if fid not in seen_ids:
                     seen_ids.add(fid)
                     unique_feeds.append(feed)
             return unique_feeds
     except Exception as e:
-        print(f"Error fetching feeds for board {board_id}: {e}", flush=True)
+        print(f"Error fetching feeds: {e}", flush=True)
     return []
 
 def send_to_discord_bot(payload, target_channel):
@@ -191,24 +190,29 @@ def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_st
     }
     send_to_discord_bot(payload, target_channel)
 
-def send_to_discord(feed_summary, category):
+def send_to_discord(feed_summary, origin_board_id):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
     
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "공지사항"
     raw_contents = target_data.get("contents") or ""
-    color = category["color"]
+    
+    meta = BOARD_METADATA.get(str(origin_board_id), BOARD_METADATA["default"])
+    color = meta["color"]
+    board_name = meta["name"]
+
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
+    # กรองคูปองแยกห้อง
     if "쿠폰" in title:
         route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
         send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
         return
 
     header_embed = {
-        "title": "트릭컬 리바이브", 
+        "title": f"트릭컬 리바이브 - {board_name}", 
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
         "color": color
     }
@@ -252,49 +256,51 @@ def run():
     last_ids = load_last_ids()
     updated = False
 
-    for cat in CATEGORIES:
-        board_id = cat["board_id"]
-        feeds = fetch_lounge_feeds(board_id)
-        if not feeds: continue
+    feeds = fetch_lounge_feeds(TARGET_BOARD_ID)
+    if not feeds:
+        print(f"No feeds found on board {TARGET_BOARD_ID}", flush=True)
+        return
 
-        raw_seen = last_ids.get(board_id, [])
-        if isinstance(raw_seen, str):
-            seen_ids = [raw_seen] if raw_seen else []
-        else:
-            seen_ids = list(raw_seen)
+    raw_seen = last_ids.get(TARGET_BOARD_ID, [])
+    if isinstance(raw_seen, str):
+        seen_ids = [raw_seen] if raw_seen else []
+    else:
+        seen_ids = list(raw_seen)
 
-        # จำโพสต์ปัจจุบันทั้งหมดในครั้งแรกเพื่อกันสแปม
-        if not seen_ids:
-            last_ids[board_id] = [str(f.get("feedId")) for f in feeds]
-            updated = True
-            continue
+    # รันครั้งแรกสุดจำโพสต์ปัจจุบันทั้งหมดไว้ก่อน เพื่อไม่ให้ยิงรัว
+    if not seen_ids:
+        last_ids[TARGET_BOARD_ID] = [str(f.get("feedId")) for f in feeds]
+        save_last_ids(last_ids)
+        return
 
-        is_test_mode = "0" in seen_ids
+    is_test_mode = "0" in seen_ids
 
-        # หาโพสต์ใหม่ที่ยังไม่เคยมี ID ในประวัติของหมวดนี้
-        new_posts = []
-        for feed in feeds:
-            f_id = str(feed.get("feedId"))
-            if f_id not in seen_ids:
-                new_posts.append(feed)
+    new_posts = []
+    for feed in feeds:
+        f_id = str(feed.get("feedId"))
+        if f_id not in seen_ids:
+            new_posts.append(feed)
 
-        if is_test_mode and new_posts: 
-            new_posts = [new_posts[0]]
-            seen_ids = [x for x in seen_ids if x != "0"]
+    if is_test_mode and new_posts: 
+        new_posts = [new_posts[0]]
+        seen_ids = [x for x in seen_ids if x != "0"]
 
-        if new_posts:
-            posts_to_send = new_posts[:3]
+    if new_posts:
+        # จำกัดการส่งรอบละไม่เกิน 3 โพสต์
+        posts_to_send = new_posts[:3]
 
-            for post in reversed(posts_to_send): 
-                send_to_discord(post, cat)
+        for post in reversed(posts_to_send): 
+            # ดึง boardId ดั้งเดิมของเนื้อหาเพื่อเลือกสีและชื่อหมวดให้ถูกต้อง
+            origin_board = str(post.get("boardId") or (post.get("board") or {}).get("boardId") or "")
+            send_to_discord(post, origin_board)
 
-            for f in feeds:
-                fid = str(f.get("feedId"))
-                if fid not in seen_ids:
-                    seen_ids.append(fid)
+        for f in feeds:
+            fid = str(f.get("feedId"))
+            if fid not in seen_ids:
+                seen_ids.append(fid)
 
-            last_ids[board_id] = seen_ids[-50:]
-            updated = True
+        last_ids[TARGET_BOARD_ID] = seen_ids[-50:]
+        updated = True
 
     if updated: 
         save_last_ids(last_ids)
