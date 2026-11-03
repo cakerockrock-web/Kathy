@@ -2,7 +2,7 @@ name: YouTube Notifier
 
 on:
   schedule:
-    - cron: '*/15 * * * *'  # ทำงานอัตโนมัติทุก 15 นาที
+    - cron: '*/5 * * * *'  # ทำงานอัตโนมัติทุกๆ 5 นาที
   workflow_dispatch:        # รองรับการกดรันด้วยตนเอง (Manual Trigger)
 
 jobs:
