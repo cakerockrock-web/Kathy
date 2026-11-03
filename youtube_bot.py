@@ -16,14 +16,14 @@ YOUTUBE_CHANNELS = [
     {
         "name": "EPID Games",
         "channel_url": "https://www.youtube.com/@epidgames6350/videos",
-        "discord_channel_id": "1566895972859121885",
+        "discord_channel_id": "1440393996739547310",
         "role_id": None
     },
     # --- ช่องที่ 1: EPID Games (คลิป Shorts) ---
     {
         "name": "EPID Games (Shorts)",
         "channel_url": "https://www.youtube.com/@epidgames6350/shorts",
-        "discord_channel_id": "1566895972859121885",
+        "discord_channel_id": "1440393996739547310",
         "role_id": None
     },
 
@@ -31,13 +31,13 @@ YOUTUBE_CHANNELS = [
     {
         "name": "Trickcal: Chibi Go",
         "channel_url": "https://www.youtube.com/@trickcal_en/videos",
-        "discord_channel_id": "1566904623304810547",
+        "discord_channel_id": "1440393394705797211",
         "role_id": None
     },
     {
         "name": "Trickcal: Chibi Go",
         "channel_url": "https://www.youtube.com/@trickcal_en/shorts",
-        "discord_channel_id": "1566904623304810547",
+        "discord_channel_id": "1440393394705797211",
         "role_id": None
     },
 
@@ -45,13 +45,13 @@ YOUTUBE_CHANNELS = [
     {
         "name": "Trickcal Patima",
         "channel_url": "https://www.youtube.com/@Patima_KR/videos",
-        "discord_channel_id": "1566904623304810547",
+        "discord_channel_id": "1566748540133318737",
         "role_id": None
     },
     {
         "name": "ชื่อช่องที่ 3 (Shorts)",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สาม/shorts",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องที่_3",
+        "channel_url": "https://www.youtube.com/@Patima_KR/shorts",
+        "discord_channel_id": "1566748540133318737",
         "role_id": None
     }
 ]
