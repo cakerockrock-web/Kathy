@@ -11,7 +11,7 @@ YOUTUBE_CHANNELS = [
     {
         "name": "EPIDGames",
         "feed_url": "https://www.youtube.com/feeds/videos.xml?channel_id=UCI37oS0O5OlmQNeiyIywEAQ",
-        "discord_channel_id": "ใส่_ID_ห้อง_Discord_ช่องนี้"
+        "discord_channel_id": "1440393996739547310"
     }
 ]
 
