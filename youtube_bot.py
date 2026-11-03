@@ -29,14 +29,14 @@ YOUTUBE_CHANNELS = [
 
     # --- ช่องที่ 2: ระบุชื่อและลิงก์ของช่องที่ 2 ---
     {
-        "name": "ชื่อช่องที่ 2",
+        "name": "Trickcal: Chibi Go",
         "channel_url": "https://www.youtube.com/@trickcal_en/videos",
         "discord_channel_id": "1566904623304810547",
         "role_id": None
     },
     {
-        "name": "ชื่อช่องที่ 2 (Shorts)",
-        "channel_url": "https://www.youtube.com/@ชื่อช่องที่สอง/shorts",
+        "name": "Trickcal: Chibi Go",
+        "channel_url": "https://www.youtube.com/@trickcal_en/shorts",
         "discord_channel_id": "1566904623304810547",
         "role_id": None
     },
