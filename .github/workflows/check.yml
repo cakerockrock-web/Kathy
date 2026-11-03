@@ -1,17 +1,12 @@
-name: Naver Lounge Notifier
+name: Check Cafe Notice
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # ทำงานทุก 5 นาที
-  workflow_dispatch:        # กดปุ่มรันด้วยมือได้
-  push:
-    paths:
-      - 'main.py'           # หรือ 'naver_bot.py'
-      - 'last_ids.json'
-      - '.github/workflows/naver.yml'
+    - cron: '*/5 * * * *'  # รันทุก 5 นาที
+  workflow_dispatch:        # กดปุ่มรันมือได้
 
 jobs:
-  check-naver:
+  check-notice:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -26,7 +21,7 @@ jobs:
         run: |
           pip install requests
 
-      - name: Run Naver Bot
+      - name: Run Script
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
