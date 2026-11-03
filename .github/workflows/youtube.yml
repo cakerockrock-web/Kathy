@@ -2,13 +2,8 @@ name: YouTube Notifier
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # ทำงานทุก 5 นาที
-  workflow_dispatch:        # กดปุ่มรันด้วยมือได้
-  push:
-    paths:
-      - 'youtube_bot.py'
-      - 'last_youtube_videos.json'
-      - '.github/workflows/youtube.yml'
+    - cron: '*/5 * * * *'  # รันอัตโนมัติทุก 5 นาที
+  workflow_dispatch:        # กดปุ่มรันมือได้
 
 jobs:
   check-youtube:
@@ -18,7 +13,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: setup-python@v5
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
