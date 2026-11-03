@@ -2,8 +2,11 @@ name: YouTube Notifier
 
 on:
   schedule:
-    - cron: '* * * * *'  # สั่งให้ตื่นมาเช็กทุกๆ 1 นาที
+    - cron: '*/5 * * * *'  # แนะนำรอบละ 5 นาที เพื่อให้ Git มีเวลา Commit ทัน
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-bot:
@@ -26,3 +29,11 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
         run: |
           python youtube_bot.py
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add last_youtube_videos.json
+          git commit -m "Update last YouTube videos [skip ci]" || exit 0
+          git push
