@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 
 # รหัสบอท และห้อง Discord สำหรับ Webtoon
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1566795322632704143"
+CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1440393996739547310"
 STORAGE_FILE = "last_webtoon_ids.json"
 TARGET_BOARD_ID = "6"
 
@@ -38,43 +38,17 @@ def clean_image_url(url):
     return url.split("?")[0]
 
 def extract_comic_images(raw_html):
-    """ดึงเฉพาะรูปภาพการ์ตูนแท้ๆ และตัดรูปการ์ด Twitter/X หรือไอคอนขยะทิ้งทั้งหมด"""
+    """ดึงเฉพาะ URL รูปภาพการ์ตูนทั้งหมดออกมา โดยไม่เอาข้อความเลย"""
     if not raw_html: return []
-    
-    # 1. ตัดส่วนที่เป็นกล่องการ์ดลิงก์ Twitter/X ออกจาก HTML ทันที
-    cleaned_html = re.sub(r'<div[^>]*class="[^"]*(?:oglink|link_box|banner)[^"]*"[^>]*>.*?</div>', '', raw_html, flags=re.DOTALL | re.IGNORECASE)
-    cleaned_html = re.sub(r'<a[^>]*class="[^"]*oglink[^"]*"[^>]*>.*?</a>', '', cleaned_html, flags=re.DOTALL | re.IGNORECASE)
-    
-    img_tags = re.findall(r'<img[^>]+>', cleaned_html, flags=re.IGNORECASE)
+    img_tags = re.findall(r'<img[^>]+>', raw_html, flags=re.IGNORECASE)
     images = []
     seen = set()
-    
-    # คำที่มักเป็นไอคอน โลโก้ หรือภาพพรีวิวลิงก์ที่ไม่ใช่รูปการ์ตูน
-    IGNORE_KEYWORDS = [
-        "icon", "logo", "favicon", "avatar", "profile", "twimg", 
-        "twitter", "x.com", "placeholder", "blank", "static", "badge"
-    ]
-    
     for tag in img_tags:
-        # ข้าม tag ที่มี class หรือ id บ่งบอกว่าเป็น icon หรือ link preview
-        if any(k in tag.lower() for k in ["oglink", "icon", "logo", "thumb_link"]):
-            continue
-            
         m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
         if m:
             img_url = m.group(1).strip()
-            if img_url.startswith("//"): 
-                img_url = "https:" + img_url
-                
+            if img_url.startswith("//"): img_url = "https:" + img_url
             if img_url.startswith("http"):
-                # ข้ามรูปที่มีคำต้องห้าม
-                if any(k in img_url.lower() for k in IGNORE_KEYWORDS):
-                    continue
-                    
-                # ต้องเป็นรูปที่อัปโหลดบนระบบของ Naver (pstatic.net หรือ naver.com) เท่านั้น
-                if "pstatic.net" not in img_url and "naver.com" not in img_url:
-                    continue
-                    
                 clean_url = clean_image_url(img_url)
                 if clean_url and clean_url not in seen:
                     seen.add(clean_url)
@@ -139,7 +113,7 @@ def send_webtoon_to_discord(feed_summary):
     if thumb_url: 
         header_embed["thumbnail"] = {"url": thumb_url}
 
-    # 2. ดึงรูปภาพการ์ตูนแท้ๆ (กรองรูปขยะทิ้งหมดแล้ว)
+    # 2. ดึงรูปภาพทั้งหมด (ไม่เอาข้อความเลย และไม่ผูก URL เพื่อป้องกัน Discord บีบภาพ)
     images = extract_comic_images(raw_contents)
     image_embeds = []
     
@@ -149,7 +123,7 @@ def send_webtoon_to_discord(feed_summary):
             "color": color
         })
 
-    # 3. จัดกลุ่มส่ง
+    # 3. จัดกลุ่มส่ง (ข้อความละไม่เกิน 10 Embeds ตามกฎ Discord)
     batches = []
     current_batch = [header_embed]
 
