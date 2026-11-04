@@ -5,9 +5,9 @@ import json
 import requests
 from datetime import datetime, timezone, timedelta
 
-# ดึง Token และ ID ห้องสำหรับ Webtoon จาก Environment (ตั้งค่าใน Secrets)
+# ดึงรหัสบอท และตั้งค่าห้อง Discord สำหรับ Webtoon ไว้ที่ 1440393996739547310
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") 
+CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1440393996739547310"
 STORAGE_FILE = "last_webtoon_ids.json"
 TARGET_BOARD_ID = "6"
 
@@ -64,26 +64,27 @@ def fetch_feed_detail(feed_id):
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"}
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=15)
         if res.status_code == 200: return res.json().get("content", {}).get("feed")
-    except: pass
+    except Exception as e:
+        print(f"Error fetching detail {feed_id}: {e}", flush=True)
     return None
 
 def fetch_lounge_feeds():
     api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={TARGET_BOARD_ID}&buffFilteringYN=N&limit=15&offset=0&order=NEW"
     headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{TARGET_BOARD_ID}"}
     try:
-        res = requests.get(api_url, headers=headers, timeout=10)
+        res = requests.get(api_url, headers=headers, timeout=15)
         if res.status_code == 200:
             content = res.json().get("content", {})
-            return content.get("noticeFeeds", []) + content.get("feeds", [])
+            return (content.get("noticeFeeds") or []) + (content.get("feeds") or [])
     except Exception as e:
-        print(f"Error fetching webtoon feeds: {e}", flush=True)
+        print(f"Error fetching feeds: {e}", flush=True)
     return []
 
 def send_to_discord_bot(payload):
     if not CHANNEL_ID_WEBTOON:
-        print("Error: Webtoon channel ID is empty!", flush=True)
+        print("Error: Target channel ID is empty!", flush=True)
         return
         
     url = f"https://discord.com/api/v10/channels/{CHANNEL_ID_WEBTOON}/messages"
@@ -91,7 +92,9 @@ def send_to_discord_bot(payload):
         "Authorization": f"Bot {BOT_TOKEN}",
         "Content-Type": "application/json"
     }
-    requests.post(url, headers=headers, json=payload)
+    resp = requests.post(url, headers=headers, json=payload)
+    if resp.status_code not in (200, 204):
+        print(f"Discord API Error ({resp.status_code}): {resp.text}", flush=True)
 
 def send_webtoon_to_discord(feed_summary):
     feed_id = str(feed_summary.get("feedId"))
@@ -100,14 +103,14 @@ def send_webtoon_to_discord(feed_summary):
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "웹툰"
     raw_contents = target_data.get("contents") or ""
-    color = 0x2ECC71 # สีเขียวสำหรับ Webtoon
+    color = 0x2ECC71  # กรอบสีเขียว Webtoon
     
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # 1. ส่งหน้าปกและลิงก์
+    # 1. ส่งการ์ดหัวข้อและปุ่มกดไปอ่าน
     header_embed = {
-        "title": f"트릭컬 리바이브 - 웹툰 (Webtoon)", 
+        "title": "트릭컬 리바이브 - 웹툰 (Webtoon)", 
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
         "color": color
     }
@@ -124,12 +127,12 @@ def send_webtoon_to_discord(feed_summary):
     }
     send_to_discord_bot(payload_header)
 
-    # 2. ส่งเนื้อหาและรูปภาพ (Webtoon มักจะมีรูปเยอะ โค้ดนี้จะช่วยสอยรูปมาเรียงให้)
+    # 2. ส่งรูปภาพและเนื้อเรื่อง (ป้องกันตัวอักษรเกินลิมิต Discord)
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     
     for sec in sections:
-        sec_text = sec["text"][:2000].rstrip() + "..." if len(sec["text"]) > 2000 else sec["text"]
+        sec_text = sec["text"][:1900].rstrip() + "..." if len(sec["text"]) > 1900 else sec["text"]
         emb = {"color": color}
         if sec_text: emb["description"] = sec_text
         if sec["image"]: emb["image"] = {"url": sec["image"]}
@@ -137,25 +140,38 @@ def send_webtoon_to_discord(feed_summary):
 
     if len(content_embeds) > 25:
         content_embeds = content_embeds[:25]
-        content_embeds.append({"description": "[ รูปภาพหรือเนื้อหาเยอะเกินไป กรุณากดอ่านต่อในลิงก์หลัก ]", "color": color})
+        content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color})
 
-    MAX_EMBEDS = 10 
-    for i in range(0, len(content_embeds), MAX_EMBEDS):
-        batch = content_embeds[i:i + MAX_EMBEDS]
+    batches = []
+    current_batch = []
+    current_char_count = 0
+
+    for emb in content_embeds:
+        desc_len = len(emb.get("description") or "")
+        if len(current_batch) >= 10 or (current_char_count + desc_len > 5000 and current_batch):
+            batches.append(current_batch)
+            current_batch = [emb]
+            current_char_count = desc_len
+        else:
+            current_batch.append(emb)
+            current_char_count += desc_len
+
+    if current_batch:
+        batches.append(current_batch)
+
+    for batch in batches:
         send_to_discord_bot({"embeds": batch})
 
 def run():
-    if not BOT_TOKEN or not CHANNEL_ID_WEBTOON:
-        print("Missing BOT_TOKEN or DISCORD_CHANNEL_ID_WEBTOON", flush=True)
+    if not BOT_TOKEN:
+        print("Missing BOT_TOKEN", flush=True)
         return
 
     seen_ids = load_last_ids()
     feeds = fetch_lounge_feeds()
-    
     if not feeds:
         return
 
-    # ลบข้อมูลที่ซ้ำกันออก
     unique_feeds = []
     temp_seen = set()
     for f in feeds:
@@ -164,6 +180,7 @@ def run():
             temp_seen.add(fid)
             unique_feeds.append(f)
 
+    # รอบแรกจำโพสต์ปัจจุบันไว้ก่อนเพื่อไม่ให้ส่งสแปม
     if not seen_ids:
         save_last_ids([str(f.get("feedId")) for f in unique_feeds])
         print("Initial run: Saved current Webtoon history.")
@@ -172,12 +189,14 @@ def run():
     is_test_mode = "0" in seen_ids
     new_posts = [f for f in unique_feeds if str(f.get("feedId")) not in seen_ids]
 
+    # โหมดทดสอบ (ดึงไม่เกิน 3 ตอน)
     if is_test_mode and new_posts: 
         new_posts = new_posts[:3]
         seen_ids = [x for x in seen_ids if x != "0"]
 
+    # โหมดรันจริง (ล็อกไว้ให้ส่งไม่เกิน 3 ตอนต่อรอบ)
     if new_posts:
-        posts_to_send = new_posts[:3] # ล็อกลิมิตส่งสูงสุด 3 โพสต์
+        posts_to_send = new_posts[:3]
         for post in reversed(posts_to_send): 
             send_webtoon_to_discord(post)
 
@@ -186,7 +205,7 @@ def run():
             if fid not in seen_ids:
                 seen_ids.append(fid)
 
-        save_last_ids(seen_ids[-50:]) # เก็บย้อนหลัง 50 โพสต์
+        save_last_ids(seen_ids[-50:])
 
 if __name__ == "__main__":
     run()
