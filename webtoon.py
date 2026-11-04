@@ -5,7 +5,7 @@ import json
 import requests
 from datetime import datetime, timezone, timedelta
 
-# ดึงรหัสบอท และตั้งค่าห้อง Discord สำหรับ Webtoon ไว้ที่ 1440393996739547310
+# รหัสบอท และห้อง Discord สำหรับ Webtoon
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1566795322632704143"
 STORAGE_FILE = "last_webtoon_ids.json"
@@ -40,7 +40,6 @@ def clean_download_links(text):
     cleaned = []
     for line in lines:
         l_str = line.strip()
-        # กรองบรรทัดลิงก์ดาวน์โหลดสโตร์ทิ้งทั้งหมด
         if any(store in l_str for store in ["Google Play", "App Store", "원스토어"]):
             continue
         if "다운로드" in l_str and "바로" in l_str:
@@ -71,7 +70,7 @@ def parse_html_to_sections(raw_html):
     sections = []
     for i in range(0, len(tokens), 2):
         txt = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', tokens[i].strip())
-        txt = clean_download_links(txt)  # กรองข้อความลิงก์โหลดเกมทิ้ง
+        txt = clean_download_links(txt)
         img = tokens[i+1].strip() if i+1 < len(tokens) else None
         if txt or img: sections.append({"text": txt, "image": img})
     return sections
@@ -119,14 +118,15 @@ def send_webtoon_to_discord(feed_summary):
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "웹툰"
     raw_contents = target_data.get("contents") or ""
-    color = 0x2ECC71  # สีเขียว Webtoon
+    color = 0x2ECC71
     
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # 1. การ์ดหัวข้อและปุ่มลิงก์
+    # 1. การ์ดหัวข้อและปุ่มเปิดดูต้นฉบับ
     header_embed = {
         "title": "트릭컬 리바이브 - 웹툰 (Webtoon)", 
+        "url": post_url,
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
         "color": color
     }
@@ -143,20 +143,20 @@ def send_webtoon_to_discord(feed_summary):
     }
     send_to_discord_bot(payload_header)
 
-    # 2. รูปภาพการ์ตูน
+    # 2. จัดกลุ่มรูปภาพด้วย post_url เดียวกันเพื่อให้ Discord รวมรูปให้อัตโนมัติ
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     
     for sec in sections:
         sec_text = sec["text"][:1900].rstrip() + "..." if len(sec["text"]) > 1900 else sec["text"]
-        emb = {"color": color}
+        emb = {"color": color, "url": post_url}
         if sec_text: emb["description"] = sec_text
         if sec["image"]: emb["image"] = {"url": sec["image"]}
         if emb.get("description") or emb.get("image"): content_embeds.append(emb)
 
     if len(content_embeds) > 25:
         content_embeds = content_embeds[:25]
-        content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color})
+        content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color, "url": post_url})
 
     batches = []
     current_batch = []
