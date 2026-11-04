@@ -125,4 +125,203 @@ def fetch_lounge_feeds(board_id):
 
 def send_to_discord_bot(payload, target_channel):
     if not target_channel:
-        print("Error: Target channel ID is empty!", flush
+        print("Error: Target channel ID is empty!", flush=True)
+        return
+        
+    url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
+    headers = {
+        "Authorization": f"Bot {BOT_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    resp = requests.post(url, headers=headers, json=payload)
+    if resp.status_code not in (200, 204):
+        print(f"Discord API Error ({resp.status_code}): {resp.text}", flush=True)
+    return resp.status_code
+
+def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, target_channel):
+    raw_contents = target_data.get("contents") or ""
+    sections = parse_html_to_sections(raw_contents)
+    full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
+    
+    coupon_code, claim_period = extract_coupon_info(full_text)
+    display_period = claim_period if claim_period else f"โพสต์เมื่อ: {date_str}"
+
+    body_images = []
+    for sec in sections:
+        if sec.get("image") and sec["image"] not in body_images:
+            body_images.append(sec["image"])
+
+    selected_image = None
+    if len(body_images) >= 3:
+        selected_image = body_images[1]  
+    elif len(body_images) == 2:
+        selected_image = body_images[-1] 
+    elif len(body_images) == 1:
+        selected_image = body_images[0]  
+    elif not body_images and thumb_url:
+        selected_image = thumb_url
+
+    embed = {
+        "author": {
+            "name": "Trickcal RE:VIVE KR - Coupon",
+        },
+        "title": target_data.get("title") or "쿠폰 안내",
+        "color": 0x9B59B6,
+        "fields": [
+            {"name": "Coupon Code (ในมือถือกดค้าง Copy ได้)", "value": f"`{coupon_code}`", "inline": False},
+            {"name": "วันรับ-วันหมดอายุ", "value": display_period, "inline": False}
+        ],
+        "footer": {"text": f"เคธี่น่ารัก 🍬 | ID: {feed_id}"}
+    }
+    
+    if selected_image:
+        embed["image"] = {"url": selected_image}
+    
+    payload = {
+        "embeds": [embed],
+        "components": [{
+            "type": 1,
+            "components": [{
+                "type": 2, 
+                "style": 5, 
+                "label": " Ingame or Click Here", 
+                "url": post_url, 
+                "emoji": {"name": "🟢"}
+            }]
+        }]
+    }
+    send_to_discord_bot(payload, target_channel)
+
+def send_to_discord(feed_summary, origin_board_id):
+    feed_id = str(feed_summary.get("feedId"))
+    post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
+    
+    target_data = fetch_feed_detail(feed_id) or feed_summary
+    title = target_data.get("title") or "공지사항"
+    raw_contents = target_data.get("contents") or ""
+    
+    meta = BOARD_METADATA.get(str(origin_board_id), BOARD_METADATA["default"])
+    color = meta["color"]
+    board_name = meta["name"]
+
+    date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
+    thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
+
+    if "쿠폰" in title:
+        route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
+        send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
+        return
+
+    # 1. ส่งกล่อง Header
+    header_embed = {
+        "title": f"트릭컬 리바이브 - {board_name}", 
+        "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
+        "color": color
+    }
+    if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
+
+    payload_header = {
+        "embeds": [header_embed],
+        "components": [{
+            "type": 1,
+            "components": [{
+                "type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}
+            }]
+        }]
+    }
+    send_to_discord_bot(payload_header, CHANNEL_ID_MAIN)
+
+    # 2. จัดการเนื้อหาและรูปภาพ
+    sections = parse_html_to_sections(raw_contents)
+    content_embeds = []
+    
+    for sec in sections:
+        sec_text = sec["text"][:1900].rstrip() + "..." if len(sec["text"]) > 1900 else sec["text"]
+        emb = {"color": color}
+        if sec_text: emb["description"] = sec_text
+        if sec["image"]: emb["image"] = {"url": sec["image"]}
+        if emb.get("description") or emb.get("image"): 
+            content_embeds.append(emb)
+
+    # จำกัดไม่เกิน 25 กล่องเพื่อป้องกันสแปมเกินจำเป็น
+    if len(content_embeds) > 25:
+        content_embeds = content_embeds[:25]
+        content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color})
+
+    # รวมกลุ่มส่งโดยคุมไม่ให้เกิน 10 Embed และไม่เกิน 5,000 ตัวอักษรต่อ 1 ข้อความ
+    batches = []
+    current_batch = []
+    current_char_count = 0
+
+    for emb in content_embeds:
+        desc_len = len(emb.get("description") or "")
+        # ถ้ากล่องนี้บวกเข้าไปแล้วเกิน 5,000 ตัวอักษร หรือครบ 10 Embed ให้ตัดขึ้นก้อนใหม่
+        if len(current_batch) >= 10 or (current_char_count + desc_len > 5000 and current_batch):
+            batches.append(current_batch)
+            current_batch = [emb]
+            current_char_count = desc_len
+        else:
+            current_batch.append(emb)
+            current_char_count += desc_len
+
+    if current_batch:
+        batches.append(current_batch)
+
+    for batch in batches:
+        send_to_discord_bot({"embeds": batch}, CHANNEL_ID_MAIN)
+
+def run():
+    if not BOT_TOKEN or not CHANNEL_ID_MAIN:
+        print("Missing BOT_TOKEN or CHANNEL_ID_MAIN", flush=True)
+        return
+
+    last_ids = load_last_ids()
+    updated = False
+
+    for board_id in TARGET_BOARD_IDS:
+        feeds = fetch_lounge_feeds(board_id)
+        if not feeds:
+            continue
+
+        raw_seen = last_ids.get(board_id, [])
+        if isinstance(raw_seen, str):
+            seen_ids = [raw_seen] if raw_seen else []
+        else:
+            seen_ids = list(raw_seen)
+
+        if not seen_ids:
+            last_ids[board_id] = [str(f.get("feedId")) for f in feeds]
+            updated = True
+            continue
+
+        is_test_mode = "0" in seen_ids
+
+        new_posts = []
+        for feed in feeds:
+            f_id = str(feed.get("feedId"))
+            if f_id not in seen_ids:
+                new_posts.append(feed)
+
+        if is_test_mode and new_posts: 
+            new_posts = new_posts[:3]
+            seen_ids = [x for x in seen_ids if x != "0"]
+
+        if new_posts:
+            posts_to_send = new_posts[:3]
+
+            for post in reversed(posts_to_send): 
+                send_to_discord(post, board_id)
+
+            for f in feeds:
+                fid = str(f.get("feedId"))
+                if fid not in seen_ids:
+                    seen_ids.append(fid)
+
+            last_ids[board_id] = seen_ids[-50:]
+            updated = True
+
+    if updated: 
+        save_last_ids(last_ids)
+
+if __name__ == "__main__":
+    run()
