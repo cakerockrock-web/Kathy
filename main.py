@@ -10,14 +10,13 @@ CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
 CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
 STORAGE_FILE = "last_ids.json"
 
-# กำหนดรายชื่อบอร์ดที่ต้องการติดตาม (13 = ประกาศ, 11 = อัปเดต/กิจกรรม, 6 = Webtoon)
-TARGET_BOARD_IDS = ["13", "11", "6"]
+# กำหนดรายชื่อบอร์ดที่ต้องการติดตาม (13 = ประกาศ, 11 = อัปเดต/กิจกรรม)
+TARGET_BOARD_IDS = ["13", "11"]
 
 # กำหนดชื่อและสีของแต่ละบอร์ดให้สวยงามตอนแจ้งเตือน
 BOARD_METADATA = {
     "13": {"name": "공지사항 (ประกาศหลัก)", "color": 0x3498DB},
     "11": {"name": "이벤트/업데이트 (อัปเดต / กิจกรรม)", "color": 0xF1C40F},
-    "6":  {"name": "웹툰 (Webtoon)", "color": 0x2ECC71},
     "31": {"name": "개발자 노트 (Dev Note)", "color": 0x9E6649},
     "default": {"name": "공지사항 (ประกาศ)", "color": 0x95A5A6}
 }
@@ -256,7 +255,7 @@ def run():
     last_ids = load_last_ids()
     updated = False
 
-    # วนลูปเช็กทีละบอร์ด (13, 11, 6)
+    # วนลูปเช็กทีละบอร์ด (13, 11)
     for board_id in TARGET_BOARD_IDS:
         feeds = fetch_lounge_feeds(board_id)
         if not feeds:
@@ -269,7 +268,6 @@ def run():
         else:
             seen_ids = list(raw_seen)
 
-        # ถ้ารันครั้งแรกของบอร์ดนั้น ให้จำ ID ไว้เฉยๆ ยังไม่ส่งเข้า Discord
         if not seen_ids:
             last_ids[board_id] = [str(f.get("feedId")) for f in feeds]
             updated = True
@@ -283,13 +281,11 @@ def run():
             if f_id not in seen_ids:
                 new_posts.append(feed)
 
-        # ปรับให้โหมดทดสอบดึง 3 โพสต์ล่าสุดต่อ 1 หมวด
         if is_test_mode and new_posts: 
             new_posts = new_posts[:3]
             seen_ids = [x for x in seen_ids if x != "0"]
 
         if new_posts:
-            # ล็อกลิมิตส่งสูงสุด 3 โพสต์ต่อหมวด
             posts_to_send = new_posts[:3]
 
             for post in reversed(posts_to_send): 
@@ -300,11 +296,9 @@ def run():
                 if fid not in seen_ids:
                     seen_ids.append(fid)
 
-            # เก็บประวัติย้อนหลัง 50 โพสต์ของแต่ละบอร์ด
             last_ids[board_id] = seen_ids[-50:]
             updated = True
 
-    # ถ้ามีบอร์ดไหนอัปเดตข้อมูล ให้เซฟลงไฟล์ทีเดียว
     if updated: 
         save_last_ids(last_ids)
 
