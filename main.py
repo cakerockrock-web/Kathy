@@ -15,7 +15,7 @@ STORAGE_FILE = "last_ids.json"
 TARGET_BOARDS = ["13", "11", "31", "8"]
 
 def load_last_ids():
-    """โหลดประวัติโพสต์ และบังคับแปลงทุก ID ให้เป็นข้อความ (str) ทั้งหมดเพื่อป้องกันบั๊กชนิดข้อมูล"""
+    """โหลดประวัติโพสต์ และบังคับแปลงทุก ID ให้เป็น str ทั้งหมด"""
     if os.path.exists(STORAGE_FILE):
         try:
             with open(STORAGE_FILE, "r", encoding="utf-8") as f:
@@ -26,7 +26,7 @@ def load_last_ids():
     return []
 
 def save_last_ids(data):
-    """บันทึกประวัติโพสต์โดยกรองค่าซ้ำและเก็บเป็น str เสมอ"""
+    """บันทึกประวัติโพสต์โดยตัดค่าซ้ำและเก็บเป็น str เสมอ"""
     clean_data = list(dict.fromkeys([str(x).strip() for x in data if str(x).strip()]))
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
         json.dump(clean_data, f, ensure_ascii=False, indent=2)
@@ -44,9 +44,49 @@ def clean_image_url(url):
     if not url: return None
     return url.split("?")[0]
 
+def clean_unwanted_text(text):
+    """ตัดลิงก์ดาวน์โหลดและลิงก์ร้านค้าที่ไม่จำเป็นท้ายโพสต์ทิ้ง"""
+    if not text: return ""
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        l_str = line.strip()
+        if any(store in l_str for store in ["Google Play", "App Store", "원스토어"]):
+            continue
+        if "다운로드" in l_str and "바로" in l_str:
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+def format_table_to_text(table_html):
+    """แปลงตาราง HTML ให้เป็นบรรทัดข้อความกระชับ อ่านง่าย ไม่แตกแถว"""
+    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, flags=re.DOTALL | re.IGNORECASE)
+    formatted_rows = []
+    for r in rows:
+        cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', r, flags=re.DOTALL | re.IGNORECASE)
+        clean_cells = []
+        for c in cells:
+            c_text = re.sub(r'<[^>]+>', ' ', c)
+            c_text = html.unescape(c_text).strip()
+            c_text = re.sub(r'\s+', ' ', c_text)
+            if c_text:
+                clean_cells.append(c_text)
+        if clean_cells:
+            # รวมคอลัมน์ในแถวเดียวกันด้วยเครื่องหมาย : หรือ -
+            if len(clean_cells) == 2:
+                formatted_rows.append(f"• {clean_cells[0]}: {clean_cells[1]}")
+            else:
+                formatted_rows.append(" - " + " | ".join(clean_cells))
+    return "\n" + "\n".join(formatted_rows) + "\n"
+
 def parse_html_to_sections(raw_html):
+    """แยกเนื้อหาข้อความและรูปภาพ จัดการตาราง และเว้นวรรคให้พอดี"""
     if not raw_html: return []
     
+    # 1. จัดการแปลงตาราง HTML ให้เรียบร้อยก่อน
+    raw_html = re.sub(r'<table[^>]*>(.*?)</table>', lambda m: format_table_to_text(m.group(0)), raw_html, flags=re.DOTALL | re.IGNORECASE)
+
+    # 2. แปลงรูปภาพเป็นโทเคน
     def img_replacer(match):
         tag = match.group(0)
         m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
@@ -61,7 +101,6 @@ def parse_html_to_sections(raw_html):
     text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
     text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/(?:p|div|h[1-6]|tr|li|ul|ol)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/(?:td|th)\s*>', ' | ', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
     text = html.unescape(text).replace("\xa0", " ").replace("\u200b", "")
     text = re.sub(r'[ \t]+', ' ', text)
@@ -71,9 +110,10 @@ def parse_html_to_sections(raw_html):
     sections = []
     
     for i in range(0, len(tokens), 2):
-        chunk_text = tokens[i].strip()
+        chunk_text = clean_unwanted_text(tokens[i].strip())
         img = tokens[i+1].strip() if i+1 < len(tokens) else None
         
+        # ตัดแบ่งข้อความหากยาวเกิน 1,800 ตัวอักษร
         if chunk_text:
             while len(chunk_text) > 1800:
                 cut_idx = chunk_text.rfind('\n', 0, 1800)
@@ -146,7 +186,7 @@ def send_to_discord_bot(channel_id, payload):
             time.sleep(2)
 
 def send_lounge_to_discord(feed_summary):
-    feed_id = str(feed_summary.get("feedId"))
+    feed_id = str(feed_summary.get("feedId")).strip()
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
     
     target_data = fetch_feed_detail(feed_id) or feed_summary
@@ -188,6 +228,7 @@ def send_lounge_to_discord(feed_summary):
             "color": color
         })
 
+    # รวมกลุ่มข้อความ
     batches = []
     current_batch = [header_embed]
     current_char_count = len(header_embed.get("title", "")) + len(header_embed.get("description", ""))
@@ -205,6 +246,7 @@ def send_lounge_to_discord(feed_summary):
     if current_batch:
         batches.append(current_batch)
 
+    # ปุ่มลิงก์ต้นฉบับ
     components = [{
         "type": 1,
         "components": [{
@@ -212,6 +254,7 @@ def send_lounge_to_discord(feed_summary):
         }]
     }]
 
+    # ส่งข้อความแรกพร้อมปุ่ม (ปุ่มจะอยู่ใต้การ์ดหัวเรื่องเสมอ ไม่ไปคั่นกลางเนื้อหา)
     for idx, batch in enumerate(batches):
         payload = {"embeds": batch}
         if idx == 0:
@@ -229,7 +272,6 @@ def run():
     if not feeds:
         return
 
-    # คัดกรองโพสต์ซ้ำจาก API ให้เหลือรายการเดียว
     unique_feeds = []
     temp_seen = set()
     for f in feeds:
@@ -238,18 +280,14 @@ def run():
             temp_seen.add(fid)
             unique_feeds.append(f)
 
-    # รอบแรกสุด (ไม่มีประวัติ) ให้จำโพสต์ปัจจุบันทั้งหมดไว้ทันที
     if not seen_ids:
         all_current = [str(f.get("feedId")).strip() for f in unique_feeds]
         save_last_ids(all_current)
         print("Initial run: Saved current history.")
         return
 
-    # ตรวจสอบโหมดทดสอบ
     is_test_mode = "0" in seen_ids
     seen_ids = [x for x in seen_ids if x != "0"]
-
-    # กรองเฉพาะโพสต์ที่ ID ไม่เคยอยู่ใน seen_ids อย่างแม่นยำ
     new_posts = [f for f in unique_feeds if str(f.get("feedId")).strip() not in seen_ids]
 
     if is_test_mode and new_posts: 
@@ -265,12 +303,10 @@ def run():
             except Exception as e:
                 print(f"Error sending post {fid}: {e}", flush=True)
             
-            # เมื่อส่งเสร็จ ให้จดจำ ID ทันที
             if fid not in seen_ids:
                 seen_ids.append(fid)
             save_last_ids(seen_ids[-100:])
 
-        # บันทึก ID ทั้งหมดที่ดึงมาได้ในรอบนี้เข้าประวัติ
         for f in unique_feeds:
             fid = str(f.get("feedId")).strip()
             if fid not in seen_ids:
