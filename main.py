@@ -2,23 +2,18 @@ import os
 import re
 import html
 import json
+import time
 import requests
 from datetime import datetime, timezone, timedelta
 
+# ดึงค่า Secrets จาก GitHub
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
-CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
+CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") or CHANNEL_ID_MAIN
 STORAGE_FILE = "last_ids.json"
 
-TARGET_BOARD_IDS = ["13", "11", "31", "8"]
-
-BOARD_METADATA = {
-    "13": {"name": "공지사항 (ประกาศหลัก)", "color": 0x3498DB},
-    "11": {"name": "이벤트/업데이트 (อัปเดต / กิจกรรม)", "color": 0xF1C40F},
-    "31": {"name": "개발자 노트 (Dev Note)", "color": 0x9E6649},
-    "8":  {"name": "패치노트 (Patch Note)", "color": 0xE67E22},
-    "default": {"name": "공지사항 (ประกาศ)", "color": 0x95A5A6}
-}
+# บอร์ดที่ต้องการตรวจสอบ (13: ประกาศ, 11: อัปเดต/กิจกรรม, 31: Dev Note, 8: แพตช์)
+TARGET_BOARDS = ["13", "11", "31", "8"]
 
 def load_last_ids():
     if os.path.exists(STORAGE_FILE):
@@ -26,8 +21,8 @@ def load_last_ids():
             with open(STORAGE_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
-            return {}
-    return {}
+            return []
+    return []
 
 def save_last_ids(data):
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
@@ -42,20 +37,30 @@ def format_thai_time(timestamp_val):
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     return f"{dt.day} {thai_months[dt.month-1]} {dt.year} {dt.hour:02d}:{dt.minute:02d} น."
 
+def clean_image_url(url):
+    if not url: return None
+    return url.split("?")[0]
+
 def parse_html_to_sections(raw_html):
+    """แยกเนื้อหาข้อความและรูปภาพออกจาก HTML อย่างปลอดภัย"""
     if not raw_html: return []
+    
+    # ดักจับแท็กรูปภาพ
     def img_replacer(match):
         tag = match.group(0)
         m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
         if m:
             img_url = m.group(1).strip()
             if img_url.startswith("//"): img_url = "https:" + img_url
-            if img_url.startswith("http"): return f"[[IMG_TOKEN:{img_url}]]"
+            if img_url.startswith("http"):
+                clean_url = clean_image_url(img_url)
+                return f"\n[[IMG_TOKEN:{clean_url}]]\n"
         return ""
+
     text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
     text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/(?:p|div|h[1-6]|tr|li|ul|ol)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/(?:td|th)\s*>', ' ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/(?:td|th)\s*>', ' | ', text, flags=re.IGNORECASE)
     text = re.sub(r'<[^>]+>', '', text)
     text = html.unescape(text).replace("\xa0", " ").replace("\u200b", "")
     text = re.sub(r'[ \t]+', ' ', text)
@@ -63,199 +68,140 @@ def parse_html_to_sections(raw_html):
 
     tokens = re.split(r'\[\[IMG_TOKEN:(https?://[^\]]+)\]\]', text)
     sections = []
+    
     for i in range(0, len(tokens), 2):
-        txt = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', tokens[i].strip())
+        chunk_text = tokens[i].strip()
         img = tokens[i+1].strip() if i+1 < len(tokens) else None
-        if txt or img: sections.append({"text": txt, "image": img})
+        
+        # ตัดแบ่งข้อความหากยาวเกิน 1,800 ตัวอักษร เพื่อไม่ให้ Discord Error
+        if chunk_text:
+            while len(chunk_text) > 1800:
+                cut_idx = chunk_text.rfind('\n', 0, 1800)
+                if cut_idx == -1: cut_idx = 1800
+                sections.append({"text": chunk_text[:cut_idx].strip(), "image": None})
+                chunk_text = chunk_text[cut_idx:].strip()
+            if chunk_text:
+                sections.append({"text": chunk_text, "image": None})
+                
+        if img:
+            sections.append({"text": "", "image": img})
+
     return sections
 
-def extract_coupon_info(text):
-    coupon_code = "N/A"
-    claim_period = None
-    
-    match_code = re.search(r'쿠폰\s*코드[^\n]*\n+([^\n]+)', text)
-    if match_code:
-        coupon_code = match_code.group(1).replace('◆', '').replace('◇', '').strip()
-        
-    if coupon_code == "N/A" or not coupon_code:
-        code_match = re.search(r'([A-Z0-9]{6,20})', text)
-        if code_match:
-            coupon_code = code_match.group(1)
-            
-    match_period = re.search(r'사용\s*기한[^\n]*\n+([^\n]+)', text)
-    if match_period:
-        claim_period = match_period.group(1).strip()
-        if claim_period.startswith("-"):
-            claim_period = claim_period[1:].strip()
-            
-    return coupon_code, claim_period
-
 def fetch_feed_detail(feed_id):
+    """ดึงเนื้อหาโพสต์ฉบับเต็ม พร้อมระบบลองใหม่ 3 ครั้งหากเจอโพสต์ขนาดใหญ่"""
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"}
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        if res.status_code == 200: return res.json().get("content", {}).get("feed")
-    except Exception as e:
-        print(f"Error fetching detail {feed_id}: {e}", flush=True)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
+    }
+    for attempt in range(3):
+        try:
+            res = requests.get(url, headers=headers, timeout=25)
+            if res.status_code == 200:
+                feed = res.json().get("content", {}).get("feed")
+                if feed and feed.get("contents"):
+                    return feed
+        except Exception as e:
+            print(f"Attempt {attempt+1} fetching detail {feed_id} failed: {e}", flush=True)
+            time.sleep(2)
     return None
 
-def fetch_lounge_feeds(board_id):
-    api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={board_id}&buffFilteringYN=N&limit=15&offset=0&order=NEW"
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": f"https://game.naver.com/lounge/Trickcal/board/{board_id}"}
-    try:
-        res = requests.get(api_url, headers=headers, timeout=15)
-        if res.status_code == 200:
-            content = res.json().get("content", {})
-            notice_feeds = content.get("noticeFeeds") or []
-            normal_feeds = content.get("feeds") or []
-            combined = notice_feeds + normal_feeds
+def fetch_lounge_feeds():
+    """ดึงรายชื่อโพสต์ล่าสุดจากทุกบอร์ดที่กำหนด"""
+    all_feeds = []
+    for b_id in TARGET_BOARDS:
+        api_url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed?boardId={b_id}&buffFilteringYN=N&limit=10&offset=0&order=NEW"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Referer": f"https://game.naver.com/lounge/Trickcal/board/{b_id}"
+        }
+        try:
+            res = requests.get(api_url, headers=headers, timeout=15)
+            if res.status_code == 200:
+                content = res.json().get("content", {})
+                feeds = (content.get("noticeFeeds") or []) + (content.get("feeds") or [])
+                all_feeds.extend(feeds)
+        except Exception as e:
+            print(f"Error fetching board {b_id}: {e}", flush=True)
+    return all_feeds
 
-            seen_ids = set()
-            unique_feeds = []
-            for feed in combined:
-                fid = str(feed.get("feedId"))
-                if fid not in seen_ids:
-                    seen_ids.add(fid)
-                    unique_feeds.append(feed)
-            return unique_feeds
-    except Exception as e:
-        print(f"Error fetching feeds for board {board_id}: {e}", flush=True)
-    return []
-
-def send_to_discord_bot(payload, target_channel):
-    if not target_channel:
-        print("Error: Target channel ID is empty!", flush=True)
-        return
-        
-    url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
+def send_to_discord_bot(channel_id, payload):
+    if not channel_id: return
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
         "Authorization": f"Bot {BOT_TOKEN}",
         "Content-Type": "application/json"
     }
-    resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code not in (200, 204):
-        print(f"Discord API Error ({resp.status_code}): {resp.text}", flush=True)
-    return resp.status_code
-
-def send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, target_channel):
-    raw_contents = target_data.get("contents") or ""
-    sections = parse_html_to_sections(raw_contents)
-    full_text = "\n".join([sec["text"] for sec in sections if sec["text"]])
     
-    coupon_code, claim_period = extract_coupon_info(full_text)
-    display_period = claim_period if claim_period else f"โพสต์เมื่อ: {date_str}"
+    # ส่งข้อความ พร้อมระบบดักรับมือ Rate Limit 429
+    for _ in range(3):
+        resp = requests.post(url, headers=headers, json=payload)
+        if resp.status_code in (200, 201, 204):
+            return
+        elif resp.status_code == 429:
+            retry_after = resp.json().get("retry_after", 2)
+            print(f"Rate limited by Discord. Waiting {retry_after}s...", flush=True)
+            time.sleep(float(retry_after) + 0.5)
+        else:
+            print(f"Discord API Error ({resp.status_code}): {resp.text}", flush=True)
+            break
 
-    body_images = []
-    for sec in sections:
-        if sec.get("image") and sec["image"] not in body_images:
-            body_images.append(sec["image"])
-
-    selected_image = None
-    if len(body_images) >= 3:
-        selected_image = body_images[1]  
-    elif len(body_images) == 2:
-        selected_image = body_images[-1] 
-    elif len(body_images) == 1:
-        selected_image = body_images[0]  
-    elif not body_images and thumb_url:
-        selected_image = thumb_url
-
-    embed = {
-        "author": {
-            "name": "Trickcal RE:VIVE KR - Coupon",
-        },
-        "title": target_data.get("title") or "쿠폰 안내",
-        "color": 0x9B59B6,
-        "fields": [
-            {"name": "Coupon Code (ในมือถือกดค้าง Copy ได้)", "value": f"`{coupon_code}`", "inline": False},
-            {"name": "วันรับ-วันหมดอายุ", "value": display_period, "inline": False}
-        ],
-        "footer": {"text": f"เคธี่น่ารัก 🍬 | ID: {feed_id}"}
-    }
-    
-    if selected_image:
-        embed["image"] = {"url": selected_image}
-    
-    payload = {
-        "embeds": [embed],
-        "components": [{
-            "type": 1,
-            "components": [{
-                "type": 2, 
-                "style": 5, 
-                "label": " Ingame or Click Here", 
-                "url": post_url, 
-                "emoji": {"name": "🟢"}
-            }]
-        }]
-    }
-    send_to_discord_bot(payload, target_channel)
-
-def send_to_discord(feed_summary, origin_board_id):
+def send_lounge_to_discord(feed_summary):
     feed_id = str(feed_summary.get("feedId"))
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
     
+    # ดึงรายละเอียดแบบเต็ม
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "공지사항"
     raw_contents = target_data.get("contents") or ""
     
-    meta = BOARD_METADATA.get(str(origin_board_id), BOARD_METADATA["default"])
-    color = meta["color"]
-    board_name = meta["name"]
-
+    # ตรวจสอบว่าเป็นโพสต์คูปองหรือไม่
+    is_coupon = "쿠폰" in title or "COUPON" in title.upper()
+    target_channel = CHANNEL_ID_COUPON if is_coupon else CHANNEL_ID_MAIN
+    color = 0xF1C40F if is_coupon else 0x2ECC71  # สีเหลืองถ้าเป็นคูปอง, สีเขียวถ้าเป็นประกาศทั่วไป
+    
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
-    thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
+    thumb_url = clean_image_url(next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None))
 
-    if "쿠폰" in title:
-        route_to = CHANNEL_ID_COUPON if CHANNEL_ID_COUPON else CHANNEL_ID_MAIN
-        send_coupon_layout(target_data, feed_id, post_url, color, thumb_url, date_str, route_to)
-        return
-
-    # 1. ส่งกล่อง Header
+    # 1. กล่องหัวข้อหลัก
     header_embed = {
-        "title": f"트릭컬 리바이브 - {board_name}", 
+        "title": "트릭컬 리바이브 (Trickcal RE:VIVE)", 
+        "url": post_url,
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
         "color": color
     }
-    if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
+    if thumb_url: 
+        header_embed["thumbnail"] = {"url": thumb_url}
 
-    payload_header = {
-        "embeds": [header_embed],
-        "components": [{
-            "type": 1,
-            "components": [{
-                "type": 2, "style": 5, "label": " ไปที่ลิงก์", "url": post_url, "emoji": {"name": "🟢"}
-            }]
-        }]
-    }
-    send_to_discord_bot(payload_header, CHANNEL_ID_MAIN)
-
-    # 2. จัดการเนื้อหาและรูปภาพ
+    # 2. แกะข้อความและรูปภาพทั้งหมด
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     
     for sec in sections:
-        sec_text = sec["text"][:1900].rstrip() + "..." if len(sec["text"]) > 1900 else sec["text"]
         emb = {"color": color}
-        if sec_text: emb["description"] = sec_text
-        if sec["image"]: emb["image"] = {"url": sec["image"]}
-        if emb.get("description") or emb.get("image"): 
+        if sec["text"]:
+            emb["description"] = sec["text"]
+        if sec["image"]:
+            emb["image"] = {"url": sec["image"]}
+        if emb.get("description") or emb.get("image"):
             content_embeds.append(emb)
 
-    # จำกัดไม่เกิน 25 กล่องเพื่อป้องกันสแปมเกินจำเป็น
-    if len(content_embeds) > 25:
-        content_embeds = content_embeds[:25]
-        content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color})
+    # จำกัดจำนวนบล็อกสูงสุดเพื่อไม่ให้สแปมช่องแชทจนเกินไป (ตัดจบเหมือนตัวอย่าง)
+    if len(content_embeds) > 28:
+        content_embeds = content_embeds[:28]
+        content_embeds.append({
+            "description": "[ 컴포넌트 초과로 자세한 내용은 생략합니다 / เนื้อหายาวเกินกำหนด สามารถอ่านฉบับเต็มได้ในลิงก์ Naver ]",
+            "color": color
+        })
 
-    # รวมกลุ่มส่งโดยคุมไม่ให้เกิน 10 Embed และไม่เกิน 5,000 ตัวอักษรต่อ 1 ข้อความ
+    # รวมชุดข้อความละไม่เกิน 10 Embeds และไม่เกิน 5,000 ตัวอักษร
     batches = []
-    current_batch = []
-    current_char_count = 0
+    current_batch = [header_embed]
+    current_char_count = len(header_embed.get("title", "")) + len(header_embed.get("description", ""))
 
     for emb in content_embeds:
         desc_len = len(emb.get("description") or "")
-        # ถ้ากล่องนี้บวกเข้าไปแล้วเกิน 5,000 ตัวอักษร หรือครบ 10 Embed ให้ตัดขึ้นก้อนใหม่
         if len(current_batch) >= 10 or (current_char_count + desc_len > 5000 and current_batch):
             batches.append(current_batch)
             current_batch = [emb]
@@ -267,61 +213,64 @@ def send_to_discord(feed_summary, origin_board_id):
     if current_batch:
         batches.append(current_batch)
 
-    for batch in batches:
-        send_to_discord_bot({"embeds": batch}, CHANNEL_ID_MAIN)
+    # ปุ่มลิงก์ต้นฉบับ
+    components = [{
+        "type": 1,
+        "components": [{
+            "type": 2, "style": 5, "label": " 네이버 라운지 (Naver Lounge)", "url": post_url, "emoji": {"name": "🟢"}
+        }]
+    }]
+
+    # วนลูปส่งทีละข้อความ พร้อมหน่วงเวลาเพื่อป้องกัน Rate Limit
+    for idx, batch in enumerate(batches):
+        payload = {"embeds": batch}
+        if idx == 0:
+            payload["components"] = components
+        send_to_discord_bot(target_channel, payload)
+        time.sleep(1.5)  # เว้นช่วง 1.5 วินาทีต่อข้อความ ให้ Discord แสดงผลได้ครบถ้วน
 
 def run():
-    if not BOT_TOKEN or not CHANNEL_ID_MAIN:
-        print("Missing BOT_TOKEN or CHANNEL_ID_MAIN", flush=True)
+    if not BOT_TOKEN:
+        print("Missing BOT_TOKEN", flush=True)
         return
 
-    last_ids = load_last_ids()
-    updated = False
+    seen_ids = load_last_ids()
+    feeds = fetch_lounge_feeds()
+    if not feeds:
+        return
 
-    for board_id in TARGET_BOARD_IDS:
-        feeds = fetch_lounge_feeds(board_id)
-        if not feeds:
-            continue
+    unique_feeds = []
+    temp_seen = set()
+    for f in feeds:
+        fid = str(f.get("feedId"))
+        if fid not in temp_seen:
+            temp_seen.add(fid)
+            unique_feeds.append(f)
 
-        raw_seen = last_ids.get(board_id, [])
-        if isinstance(raw_seen, str):
-            seen_ids = [raw_seen] if raw_seen else []
-        else:
-            seen_ids = list(raw_seen)
+    if not seen_ids:
+        save_last_ids([str(f.get("feedId")) for f in unique_feeds])
+        print("Initial run: Saved current history.")
+        return
 
-        if not seen_ids:
-            last_ids[board_id] = [str(f.get("feedId")) for f in feeds]
-            updated = True
-            continue
+    is_test_mode = "0" in seen_ids
+    new_posts = [f for f in unique_feeds if str(f.get("feedId")) not in seen_ids]
 
-        is_test_mode = "0" in seen_ids
+    # โหมดทดสอบ จำกัดส่ง 3 โพสต์
+    if is_test_mode and new_posts: 
+        new_posts = new_posts[:3]
+        seen_ids = [x for x in seen_ids if x != "0"]
 
-        new_posts = []
-        for feed in feeds:
-            f_id = str(feed.get("feedId"))
-            if f_id not in seen_ids:
-                new_posts.append(feed)
+    if new_posts:
+        posts_to_send = new_posts[:3]
+        for post in reversed(posts_to_send): 
+            send_lounge_to_discord(post)
 
-        if is_test_mode and new_posts: 
-            new_posts = new_posts[:3]
-            seen_ids = [x for x in seen_ids if x != "0"]
+        for f in unique_feeds:
+            fid = str(f.get("feedId"))
+            if fid not in seen_ids:
+                seen_ids.append(fid)
 
-        if new_posts:
-            posts_to_send = new_posts[:3]
-
-            for post in reversed(posts_to_send): 
-                send_to_discord(post, board_id)
-
-            for f in feeds:
-                fid = str(f.get("feedId"))
-                if fid not in seen_ids:
-                    seen_ids.append(fid)
-
-            last_ids[board_id] = seen_ids[-50:]
-            updated = True
-
-    if updated: 
-        save_last_ids(last_ids)
+        save_last_ids(seen_ids[-100:])
 
 if __name__ == "__main__":
     run()
