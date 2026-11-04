@@ -15,7 +15,6 @@ STORAGE_FILE = "last_ids.json"
 TARGET_BOARDS = ["13", "11", "31", "8"]
 
 def load_last_ids():
-    """โหลดประวัติโพสต์ และบังคับแปลงทุก ID ให้เป็น str ทั้งหมด"""
     if os.path.exists(STORAGE_FILE):
         try:
             with open(STORAGE_FILE, "r", encoding="utf-8") as f:
@@ -26,7 +25,6 @@ def load_last_ids():
     return []
 
 def save_last_ids(data):
-    """บันทึกประวัติโพสต์โดยตัดค่าซ้ำและเก็บเป็น str เสมอ"""
     clean_data = list(dict.fromkeys([str(x).strip() for x in data if str(x).strip()]))
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
         json.dump(clean_data, f, ensure_ascii=False, indent=2)
@@ -45,7 +43,6 @@ def clean_image_url(url):
     return url.split("?")[0]
 
 def clean_unwanted_text(text):
-    """ตัดลิงก์ดาวน์โหลดและลิงก์ร้านค้าที่ไม่จำเป็นท้ายโพสต์ทิ้ง"""
     if not text: return ""
     lines = text.split("\n")
     cleaned = []
@@ -59,7 +56,6 @@ def clean_unwanted_text(text):
     return "\n".join(cleaned).strip()
 
 def format_table_to_text(table_html):
-    """แปลงตาราง HTML ให้เป็นบรรทัดข้อความกระชับ อ่านง่าย ไม่แตกแถว"""
     rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, flags=re.DOTALL | re.IGNORECASE)
     formatted_rows = []
     for r in rows:
@@ -72,7 +68,6 @@ def format_table_to_text(table_html):
             if c_text:
                 clean_cells.append(c_text)
         if clean_cells:
-            # รวมคอลัมน์ในแถวเดียวกันด้วยเครื่องหมาย : หรือ -
             if len(clean_cells) == 2:
                 formatted_rows.append(f"• {clean_cells[0]}: {clean_cells[1]}")
             else:
@@ -80,13 +75,9 @@ def format_table_to_text(table_html):
     return "\n" + "\n".join(formatted_rows) + "\n"
 
 def parse_html_to_sections(raw_html):
-    """แยกเนื้อหาข้อความและรูปภาพ จัดการตาราง และเว้นวรรคให้พอดี"""
     if not raw_html: return []
-    
-    # 1. จัดการแปลงตาราง HTML ให้เรียบร้อยก่อน
     raw_html = re.sub(r'<table[^>]*>(.*?)</table>', lambda m: format_table_to_text(m.group(0)), raw_html, flags=re.DOTALL | re.IGNORECASE)
 
-    # 2. แปลงรูปภาพเป็นโทเคน
     def img_replacer(match):
         tag = match.group(0)
         m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
@@ -113,7 +104,6 @@ def parse_html_to_sections(raw_html):
         chunk_text = clean_unwanted_text(tokens[i].strip())
         img = tokens[i+1].strip() if i+1 < len(tokens) else None
         
-        # ตัดแบ่งข้อความหากยาวเกิน 1,800 ตัวอักษร
         if chunk_text:
             while len(chunk_text) > 1800:
                 cut_idx = chunk_text.rfind('\n', 0, 1800)
@@ -127,6 +117,41 @@ def parse_html_to_sections(raw_html):
             sections.append({"text": "", "image": img})
 
     return sections
+
+def extract_coupon_details(raw_html):
+    """แกะรหัสคูปอง และระยะเวลาการใช้งานจากเนื้อหา HTML"""
+    plain_text = re.sub(r'<\s*br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
+    plain_text = re.sub(r'<\s*/(?:p|div|tr|li)\s*>', '\n', plain_text, flags=re.IGNORECASE)
+    plain_text = re.sub(r'<[^>]+>', '', plain_text)
+    plain_text = html.unescape(plain_text).replace("\xa0", " ")
+    
+    coupon_code = "확인 불가 (ตรวจสอบในลิงก์)"
+    claim_period = "공지 확인 (ตรวจสอบในลิงก์)"
+
+    # ค้นหารหัสคูปอง
+    code_match = re.search(r'(?:쿠폰\s*번호|쿠폰\s*코드|쿠폰명|코드)\s*[:：\]\)]?\s*([A-Za-z0-9가-힣_-]{4,80})', plain_text)
+    if code_match:
+        coupon_code = code_match.group(1).strip()
+    else:
+        # หากอยู่คนละบรรทัด
+        lines = [l.strip() for l in plain_text.split('\n') if l.strip()]
+        for idx, line in enumerate(lines):
+            if any(k in line for k in ["쿠폰 번호", "쿠폰 코드", "쿠폰명"]) and idx + 1 < len(lines):
+                next_line = lines[idx + 1].strip()
+                if not any(k in next_line for k in ["기간", "안내", "유의사항"]):
+                    coupon_code = next_line
+                    break
+
+    # ค้นหาระยะเวลาการใช้งาน
+    period_match = re.search(r'(?:사용\s*기간|입력\s*기간|쿠폰\s*기간|기간)\s*[:：\]\)]?\s*([^\n\r]+)', plain_text)
+    if period_match:
+        claim_period = period_match.group(1).strip()
+
+    # ดึงลิงก์เว็บกรอกคูปอง (ถ้ามี)
+    coupon_link_match = re.search(r'https?://[^\s"\'<>]+coupon[^\s"\'<>]*', raw_html)
+    redeem_url = coupon_link_match.group(0) if coupon_link_match else "https://coupon.trickcal.com/"
+
+    return coupon_code, claim_period, redeem_url
 
 def fetch_feed_detail(feed_id):
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
@@ -185,18 +210,73 @@ def send_to_discord_bot(channel_id, payload):
         except Exception:
             time.sleep(2)
 
+def send_coupon_to_discord(feed_summary, target_data):
+    """ส่งโพสต์คูปองในรูปแบบการ์ดสรุปสีม่วง ตามแบบเป๊ะๆ"""
+    feed_id = str(feed_summary.get("feedId")).strip()
+    post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
+    title = target_data.get("title") or "쿠폰 안내"
+    raw_contents = target_data.get("contents") or ""
+    
+    coupon_code, claim_period, redeem_url = extract_coupon_details(raw_contents)
+    
+    # ดึงรูปภาพแบนเนอร์คูปอง
+    banner_url = clean_image_url(next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None))
+    if not banner_url:
+        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', raw_contents, re.IGNORECASE)
+        if img_match:
+            banner_url = clean_image_url(img_match.group(1))
+
+    # สร้างคำอธิบายใน Embed ตามรูปตัวอย่าง
+    desc = (
+        f"**{title}**\n\n"
+        f"**Coupon Code (ในมือถือกดค้าง Copy ได้)**\n"
+        f"`{coupon_code}`\n\n"
+        f"**Coupon Claim Period**\n"
+        f"{claim_period}"
+    )
+
+    coupon_embed = {
+        "title": "Trickcal RE:VIVE KR - Coupon",
+        "url": post_url,
+        "description": desc,
+        "color": 0x9B59B6,  # แถบสีม่วง
+        "footer": {
+            "text": f"เคธี่น่ารัก 🍖 | ID: {feed_id}"
+        }
+    }
+    if banner_url:
+        coupon_embed["image"] = {"url": banner_url}
+
+    payload = {
+        "embeds": [coupon_embed],
+        "components": [{
+            "type": 1,
+            "components": [{
+                "type": 2,
+                "style": 5,
+                "label": "Ingame or Click Here",
+                "url": redeem_url,
+                "emoji": {"name": "🟢"}
+            }]
+        }]
+    }
+    send_to_discord_bot(CHANNEL_ID_COUPON, payload)
+    print(f"Sent coupon {feed_id} successfully.", flush=True)
+
 def send_lounge_to_discord(feed_summary):
     feed_id = str(feed_summary.get("feedId")).strip()
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
     
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "공지사항"
+    
+    # ถ้าเป็นคูปอง ให้ส่งเข้าฟังก์ชันคูปองโดยเฉพาะ
+    if "쿠폰" in title or "COUPON" in title.upper():
+        send_coupon_to_discord(feed_summary, target_data)
+        return
+
     raw_contents = target_data.get("contents") or ""
-    
-    is_coupon = "쿠폰" in title or "COUPON" in title.upper()
-    target_channel = CHANNEL_ID_COUPON if is_coupon else CHANNEL_ID_MAIN
-    color = 0xF1C40F if is_coupon else 0x2ECC71
-    
+    color = 0x2ECC71
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = clean_image_url(next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None))
 
@@ -228,7 +308,6 @@ def send_lounge_to_discord(feed_summary):
             "color": color
         })
 
-    # รวมกลุ่มข้อความ
     batches = []
     current_batch = [header_embed]
     current_char_count = len(header_embed.get("title", "")) + len(header_embed.get("description", ""))
@@ -246,7 +325,6 @@ def send_lounge_to_discord(feed_summary):
     if current_batch:
         batches.append(current_batch)
 
-    # ปุ่มลิงก์ต้นฉบับ
     components = [{
         "type": 1,
         "components": [{
@@ -254,12 +332,11 @@ def send_lounge_to_discord(feed_summary):
         }]
     }]
 
-    # ส่งข้อความแรกพร้อมปุ่ม (ปุ่มจะอยู่ใต้การ์ดหัวเรื่องเสมอ ไม่ไปคั่นกลางเนื้อหา)
     for idx, batch in enumerate(batches):
         payload = {"embeds": batch}
         if idx == 0:
             payload["components"] = components
-        send_to_discord_bot(target_channel, payload)
+        send_to_discord_bot(CHANNEL_ID_MAIN, payload)
         time.sleep(1.5)
 
 def run():
@@ -299,7 +376,6 @@ def run():
             fid = str(post.get("feedId")).strip()
             try:
                 send_lounge_to_discord(post)
-                print(f"Sent post {fid} successfully.", flush=True)
             except Exception as e:
                 print(f"Error sending post {fid}: {e}", flush=True)
             
