@@ -10,14 +10,15 @@ CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
 CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") 
 STORAGE_FILE = "last_ids.json"
 
-# กำหนดรายชื่อบอร์ดที่ต้องการติดตาม (13 = ประกาศ, 11 = อัปเดต/กิจกรรม)
-TARGET_BOARD_IDS = ["13", "11"]
+# ติดตามบอร์ด 13 (ประกาศหลัก), 11 (อัปเดต/กิจกรรม), 31 (Dev Note), 8 (แพตช์โน้ต)
+TARGET_BOARD_IDS = ["13", "11", "31", "8"]
 
-# กำหนดชื่อและสีของแต่ละบอร์ดให้สวยงามตอนแจ้งเตือน
+# กำหนดชื่อและสีของแต่ละบอร์ด
 BOARD_METADATA = {
     "13": {"name": "공지사항 (ประกาศหลัก)", "color": 0x3498DB},
     "11": {"name": "이벤트/업데이트 (อัปเดต / กิจกรรม)", "color": 0xF1C40F},
     "31": {"name": "개발자 노트 (Dev Note)", "color": 0x9E6649},
+    "8":  {"name": "패치노트 (Patch Note)", "color": 0xE67E22},
     "default": {"name": "공지사항 (ประกาศ)", "color": 0x95A5A6}
 }
 
@@ -255,7 +256,7 @@ def run():
     last_ids = load_last_ids()
     updated = False
 
-    # วนลูปเช็กทีละบอร์ด (13, 11)
+    # วนลูปตรวจสอบทีละบอร์ด (13, 11, 31, 8)
     for board_id in TARGET_BOARD_IDS:
         feeds = fetch_lounge_feeds(board_id)
         if not feeds:
@@ -268,6 +269,7 @@ def run():
         else:
             seen_ids = list(raw_seen)
 
+        # หากรันครั้งแรกสำหรับบอร์ดนั้นๆ ให้จำโพสต์ปัจจุบันไว้ก่อนเพื่อไม่ให้สแปม
         if not seen_ids:
             last_ids[board_id] = [str(f.get("feedId")) for f in feeds]
             updated = True
@@ -281,11 +283,13 @@ def run():
             if f_id not in seen_ids:
                 new_posts.append(feed)
 
+        # โหมดทดสอบจะดึง 3 โพสต์ล่าสุดต่อบอร์ด
         if is_test_mode and new_posts: 
             new_posts = new_posts[:3]
             seen_ids = [x for x in seen_ids if x != "0"]
 
         if new_posts:
+            # จำกัดการส่งสูงสุดไม่เกิน 3 โพสต์ต่อบอร์ด
             posts_to_send = new_posts[:3]
 
             for post in reversed(posts_to_send): 
@@ -296,6 +300,7 @@ def run():
                 if fid not in seen_ids:
                     seen_ids.append(fid)
 
+            # บันทึกประวัติไว้ 50 รายการล่าสุดต่อบอร์ด
             last_ids[board_id] = seen_ids[-50:]
             updated = True
 
