@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 # รหัสบอท และห้อง Discord สำหรับ Webtoon
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1566795322632704143"
+CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1440393996739547310"
 STORAGE_FILE = "last_webtoon_ids.json"
 TARGET_BOARD_ID = "6"
 
@@ -118,32 +118,22 @@ def send_webtoon_to_discord(feed_summary):
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "웹툰"
     raw_contents = target_data.get("contents") or ""
-    color = 0x2ECC71
+    color = 0x2ECC71  # กรอบสีเขียว Webtoon
     
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # 1. การ์ดหัวข้อและปุ่มเปิดดูต้นฉบับ
+    # 1. การ์ดหัวข้อหลัก
     header_embed = {
         "title": "트릭컬 리바이브 - 웹툰 (Webtoon)", 
         "url": post_url,
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
         "color": color
     }
-    if thumb_url: header_embed["thumbnail"] = {"url": thumb_url}
+    if thumb_url: 
+        header_embed["thumbnail"] = {"url": thumb_url}
 
-    payload_header = {
-        "embeds": [header_embed],
-        "components": [{
-            "type": 1,
-            "components": [{
-                "type": 2, "style": 5, "label": " อ่านในเว็บ Naver", "url": post_url, "emoji": {"name": "🟢"}
-            }]
-        }]
-    }
-    send_to_discord_bot(payload_header)
-
-    # 2. จัดกลุ่มรูปภาพด้วย post_url เดียวกันเพื่อให้ Discord รวมรูปให้อัตโนมัติ
+    # 2. แกะเนื้อหาและรูปภาพการ์ตูน
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     
@@ -152,18 +142,21 @@ def send_webtoon_to_discord(feed_summary):
         emb = {"color": color, "url": post_url}
         if sec_text: emb["description"] = sec_text
         if sec["image"]: emb["image"] = {"url": sec["image"]}
-        if emb.get("description") or emb.get("image"): content_embeds.append(emb)
+        if emb.get("description") or emb.get("image"): 
+            content_embeds.append(emb)
 
-    if len(content_embeds) > 25:
-        content_embeds = content_embeds[:25]
+    if len(content_embeds) > 24:
+        content_embeds = content_embeds[:24]
         content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color, "url": post_url})
 
+    # 3. รวมหัวข้อเข้ากับเนื้อหาไว้ในชุดเดียวกันตั้งแต่เริ่ม (ไม่แยกส่งเดี่ยวๆ อีกแล้ว)
     batches = []
-    current_batch = []
-    current_char_count = 0
+    current_batch = [header_embed]
+    current_char_count = len(header_embed.get("title", "")) + len(header_embed.get("description", ""))
 
     for emb in content_embeds:
         desc_len = len(emb.get("description") or "")
+        # ถ้าข้อความรวมเกิน 5,000 หรือครบ 10 Embed ให้ตัดขึ้นข้อความใหม่
         if len(current_batch) >= 10 or (current_char_count + desc_len > 5000 and current_batch):
             batches.append(current_batch)
             current_batch = [emb]
@@ -175,8 +168,20 @@ def send_webtoon_to_discord(feed_summary):
     if current_batch:
         batches.append(current_batch)
 
-    for batch in batches:
-        send_to_discord_bot({"embeds": batch})
+    # ปุ่มกดไปอ่านที่ Naver
+    components = [{
+        "type": 1,
+        "components": [{
+            "type": 2, "style": 5, "label": " อ่านในเว็บ Naver", "url": post_url, "emoji": {"name": "🟢"}
+        }]
+    }]
+
+    # ส่งข้อความ (ข้อความแรกจะติดปุ่มและมีหัวเรื่องกับเนื้อหาพร้อมกันทันที)
+    for idx, batch in enumerate(batches):
+        payload = {"embeds": batch}
+        if idx == 0:
+            payload["components"] = components
+        send_to_discord_bot(payload)
 
 def run():
     if not BOT_TOKEN:
