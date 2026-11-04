@@ -4,8 +4,9 @@ import json
 import requests
 from datetime import datetime, timezone, timedelta
 
+# รหัสบอท และห้อง Discord สำหรับ Webtoon
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1566795322632704143"
+CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1440393996739547310"
 STORAGE_FILE = "last_webtoon_ids.json"
 TARGET_BOARD_ID = "6"
 
@@ -32,14 +33,15 @@ def format_thai_time(timestamp_val):
     return f"{dt.day} {thai_months[dt.month-1]} {dt.year} {dt.hour:02d}:{dt.minute:02d} น."
 
 def clean_image_url(url):
-    """ตัด ?type=... ด้านหลังทิ้ง เพื่อให้ Discord มือถือมองเห็นเป็น GIF แท้ๆ และขยับได้"""
+    """ตัด ?type=... ด้านหลังทิ้ง เพื่อให้ได้ไฟล์ภาพต้นฉบับแท้ๆ ช่วยให้ GIF ขยับบนมือถือได้"""
     if not url: return None
     return url.split("?")[0]
 
 def extract_comic_images(raw_html):
-    """ดึงเฉพาะรูปภาพการ์ตูนแท้ๆ และตัดรูปพรีวิว Twitter หรือขยะทิ้งทั้งหมด"""
+    """ดึงเฉพาะรูปภาพการ์ตูนแท้ๆ และตัดรูปการ์ด Twitter/X หรือไอคอนขยะทิ้งทั้งหมด"""
     if not raw_html: return []
     
+    # 1. ตัดส่วนที่เป็นกล่องการ์ดลิงก์ Twitter/X ออกจาก HTML ทันที
     cleaned_html = re.sub(r'<div[^>]*class="[^"]*(?:oglink|link_box|banner)[^"]*"[^>]*>.*?</div>', '', raw_html, flags=re.DOTALL | re.IGNORECASE)
     cleaned_html = re.sub(r'<a[^>]*class="[^"]*oglink[^"]*"[^>]*>.*?</a>', '', cleaned_html, flags=re.DOTALL | re.IGNORECASE)
     
@@ -47,23 +49,29 @@ def extract_comic_images(raw_html):
     images = []
     seen = set()
     
+    # คำที่มักเป็นไอคอน โลโก้ หรือภาพพรีวิวลิงก์ที่ไม่ใช่รูปการ์ตูน
     IGNORE_KEYWORDS = [
         "icon", "logo", "favicon", "avatar", "profile", "twimg", 
         "twitter", "x.com", "placeholder", "blank", "static", "badge"
     ]
     
     for tag in img_tags:
+        # ข้าม tag ที่มี class หรือ id บ่งบอกว่าเป็น icon หรือ link preview
         if any(k in tag.lower() for k in ["oglink", "icon", "logo", "thumb_link"]):
             continue
             
         m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
         if m:
             img_url = m.group(1).strip()
-            if img_url.startswith("//"): img_url = "https:" + img_url
+            if img_url.startswith("//"): 
+                img_url = "https:" + img_url
+                
             if img_url.startswith("http"):
+                # ข้ามรูปที่มีคำต้องห้าม
                 if any(k in img_url.lower() for k in IGNORE_KEYWORDS):
                     continue
-                # ดึงเฉพาะภาพที่โฮสต์บน Naver
+                    
+                # ต้องเป็นรูปที่อัปโหลดบนระบบของ Naver (pstatic.net หรือ naver.com) เท่านั้น
                 if "pstatic.net" not in img_url and "naver.com" not in img_url:
                     continue
                     
@@ -96,7 +104,10 @@ def fetch_lounge_feeds():
     return []
 
 def send_to_discord_bot(payload):
-    if not CHANNEL_ID_WEBTOON: return
+    if not CHANNEL_ID_WEBTOON:
+        print("Error: Target channel ID is empty!", flush=True)
+        return
+        
     url = f"https://discord.com/api/v10/channels/{CHANNEL_ID_WEBTOON}/messages"
     headers = {
         "Authorization": f"Bot {BOT_TOKEN}",
@@ -113,12 +124,12 @@ def send_webtoon_to_discord(feed_summary):
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "웹툰"
     raw_contents = target_data.get("contents") or ""
-    color = 0x2ECC71  # แถบสีเขียว Webtoon
+    color = 0x2ECC71  # กรอบสีเขียว Webtoon
     
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = clean_image_url(next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None))
 
-    # 1. กล่องหัวข้อ
+    # 1. การ์ดหัวข้อหลัก
     header_embed = {
         "title": "트릭컬 리바이브 - 웹툰 (Webtoon)", 
         "url": post_url,
@@ -128,7 +139,7 @@ def send_webtoon_to_discord(feed_summary):
     if thumb_url: 
         header_embed["thumbnail"] = {"url": thumb_url}
 
-    # 2. ดึงรูปภาพการ์ตูนทั้งหมด (รูปภาพเดี่ยวเต็มกรอบ ให้ GIF ขยับได้บนมือถือ)
+    # 2. ดึงรูปภาพการ์ตูนแท้ๆ (กรองรูปขยะทิ้งหมดแล้ว)
     images = extract_comic_images(raw_contents)
     image_embeds = []
     
@@ -138,7 +149,7 @@ def send_webtoon_to_discord(feed_summary):
             "color": color
         })
 
-    # รวมชุดส่ง (ชุดละไม่เกิน 10 Embeds ตามกฎ Discord)
+    # 3. จัดกลุ่มส่ง
     batches = []
     current_batch = [header_embed]
 
@@ -152,6 +163,7 @@ def send_webtoon_to_discord(feed_summary):
     if current_batch:
         batches.append(current_batch)
 
+    # ปุ่มกดไปอ่านที่หน้าเว็บต้นฉบับ
     components = [{
         "type": 1,
         "components": [{
@@ -166,10 +178,14 @@ def send_webtoon_to_discord(feed_summary):
         send_to_discord_bot(payload)
 
 def run():
-    if not BOT_TOKEN: return
+    if not BOT_TOKEN:
+        print("Missing BOT_TOKEN", flush=True)
+        return
+
     seen_ids = load_last_ids()
     feeds = fetch_lounge_feeds()
-    if not feeds: return
+    if not feeds:
+        return
 
     unique_feeds = []
     temp_seen = set()
@@ -181,12 +197,12 @@ def run():
 
     if not seen_ids:
         save_last_ids([str(f.get("feedId")) for f in unique_feeds])
+        print("Initial run: Saved current Webtoon history.")
         return
 
     is_test_mode = "0" in seen_ids
     new_posts = [f for f in unique_feeds if str(f.get("feedId")) not in seen_ids]
 
-    # ล็อกส่งไม่เกิน 3 ตอนต่อรอบ
     if is_test_mode and new_posts: 
         new_posts = new_posts[:3]
         seen_ids = [x for x in seen_ids if x != "0"]
