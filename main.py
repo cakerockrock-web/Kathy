@@ -15,7 +15,6 @@ STORAGE_FILE = "last_ids.json"
 TARGET_BOARDS = ["13", "11", "31", "8"]
 
 def load_last_ids():
-    """โหลดประวัติโพสต์ และแปลงทุก ID ให้เป็น str ทั้งหมดเพื่อป้องกันชนิดข้อมูลไม่ตรงกัน"""
     if os.path.exists(STORAGE_FILE):
         try:
             with open(STORAGE_FILE, "r", encoding="utf-8") as f:
@@ -120,68 +119,75 @@ def parse_html_to_sections(raw_html):
     return sections
 
 def extract_coupon_details(raw_html):
-    """แกะรหัสคูปองและระยะเวลาจากตารางโดยตรงอย่างแม่นยำ"""
+    """แกะรหัสคูปองและระยะเวลาการใช้งานจากทั้งตารางและข้อความบรรทัดต่อบรรทัด"""
+    # แปลง HTML เป็นข้อความเปล่าแบบรักษาการขึ้นบรรทัดใหม่
+    text = re.sub(r'<\s*br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/(?:p|div|tr|li|h[1-6])\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*/(?:td|th)\s*>', ' | ', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', '', text)
+    text = html.unescape(text).replace('\xa0', ' ')
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+
     coupon_code = None
     claim_period = None
 
-    # 1. ค้นหาในโครงสร้างตาราง HTML ก่อน (จุดที่เก็บข้อมูลจริง)
-    for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', raw_html, flags=re.DOTALL | re.IGNORECASE):
-        cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, flags=re.DOTALL | re.IGNORECASE)
-        clean_cells = [html.unescape(re.sub(r'<[^>]+>', '', c)).replace('\xa0', ' ').strip() for c in cells]
-        clean_cells = [c for c in clean_cells if c]
-        if len(clean_cells) >= 2:
-            label = clean_cells[0].replace(' ', '')
-            val = clean_cells[1].strip()
-            if any(k in label for k in ["쿠폰번호", "쿠폰코드", "쿠폰명", "코드"]):
-                if not coupon_code:
-                    coupon_code = val
-            elif any(k in label for k in ["사용기간", "입력기간", "쿠폰기간", "기간"]):
-                if not claim_period:
-                    claim_period = val
+    # สแกนทีละบรรทัด
+    for idx, line in enumerate(lines):
+        # 1. หารหัสคูปอง
+        if not coupon_code:
+            # กรณีมีคำว่า 쿠폰번호 / 쿠폰코드 อยู่ในบรรทัด
+            if any(k in line for k in ["쿠폰 번호", "쿠폰번호", "쿠폰 코드", "쿠폰코드", "쿠폰명"]):
+                # ตรวจว่ามีเครื่องหมาย : หรือ | คั่นในบรรทัดเดียวกันไหม
+                m = re.search(r'(?:쿠폰\s*번호|쿠폰\s*코드|쿠폰명)\s*[:：\|]\s*([^\n\r\|]+)', line)
+                if m:
+                    candidate = m.group(1).strip()
+                    if candidate and not any(bad in candidate for bad in ["확인", "아래", "다음", "안내"]):
+                        coupon_code = candidate
+                # ถ้าไม่มีในบรรทัดเดียวกัน ให้ดูบรรทัดถัดไป
+                elif idx + 1 < len(lines):
+                    next_l = lines[idx + 1].strip().lstrip('|:- ').strip()
+                    if next_l and not any(bad in next_l for bad in ["기간", "안내", "유의사항", "확인"]):
+                        coupon_code = next_l
 
-    # 2. หากไม่ได้อยู่ในตาราง ให้ค้นหาตามข้อความที่มี colon (:) คั่นชัดเจน
-    if not coupon_code:
-        m_code = re.search(r'(?:쿠폰\s*번호|쿠폰\s*코드|쿠폰명|코드명)\s*[:：]\s*([^\n\r<]+)', raw_html)
-        if m_code:
-            cand = html.unescape(re.sub(r'<[^>]+>', '', m_code.group(1))).strip()
-            if cand and not any(k in cand for k in ["아래", "다음", "확인", "길어졌지만"]):
-                coupon_code = cand
+        # 2. หาระยะเวลาการใช้งาน
+        if not claim_period:
+            if any(k in line for k in ["사용 기간", "사용기간", "입력 기간", "입력기간", "쿠폰 기간"]):
+                m = re.search(r'(?:사용\s*기간|입력\s*기간|쿠폰\s*기간)\s*[:：\|]\s*([^\n\r]+)', line)
+                if m:
+                    claim_period = m.group(1).strip()
+                elif idx + 1 < len(lines):
+                    claim_period = lines[idx + 1].strip().lstrip('|:- ').strip()
 
+    # Fallback หากยังหา claim_period ไม่พบ (หารูปแบบวันที่ที่มี ~)
     if not claim_period:
-        m_period = re.search(r'(?:사용\s*기간|입력\s*기간|쿠폰\s*기간|기간)\s*[:：]\s*([^\n\r<]+)', raw_html)
-        if m_period:
-            claim_period = html.unescape(re.sub(r'<[^>]+>', '', m_period.group(1))).strip()
-
-    # 3. Fallback สำหรับหารูปแบบวันที่มีเครื่องหมาย ~
-    if not claim_period:
-        m_date = re.search(r'(\d+월\s*\d+일[^\n\r<~]+~[^\n\r<]+)', raw_html)
+        m_date = re.search(r'(\d+월\s*\d+일[^\n\r~]+~[^\n\r]+)', text)
         if m_date:
-            claim_period = html.unescape(re.sub(r'<[^>]+>', '', m_date.group(1))).strip()
+            claim_period = m_date.group(1).strip()
 
-    if not coupon_code:
-        coupon_code = "확인 불가 (ตรวจสอบในลิงก์)"
-    if not claim_period:
-        claim_period = "공지 확인 (ตรวจสอบในลิงก์)"
-
-    return coupon_code, claim_period
+    return coupon_code or "확인 불가 (ตรวจสอบในลิงก์)", claim_period or "공지 확인 (ตรวจสอบในลิงก์)"
 
 def get_coupon_image(raw_contents, target_data):
-    """ค้นหารูปภาพแบนเนอร์คูปองจากเนื้อหาข้างในโพสต์เป็นหลัก ไม่ดึงภาพหัวเรื่องทั่วไป"""
+    """ดึงรูปภาพคูปองตัวจริง โดยข้ามรูปแบนเนอร์หัวเรื่องเอเลน่า"""
+    comic_images = []
     if raw_contents:
         img_tags = re.findall(r'<img[^>]+>', raw_contents, flags=re.IGNORECASE)
         for tag in img_tags:
             m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
             if m:
-                img_url = m.group(1).strip()
-                if img_url.startswith("//"): img_url = "https:" + img_url
-                if img_url.startswith("http"):
-                    if any(k in img_url.lower() for k in ["icon", "logo", "favicon", "profile", "twimg", "badge"]):
-                        continue
-                    clean_url = clean_image_url(img_url)
-                    if clean_url:
-                        return clean_url
-    
-    # ถ้าในเนื้อหาไม่มีรูป ค่อยดึงภาพประกอบแรกของโพสต์
+                url = m.group(1).strip()
+                if url.startswith("//"): url = "https:" + url
+                if url.startswith("http"):
+                    clean = clean_image_url(url)
+                    if clean and not any(k in clean.lower() for k in ["icon", "logo", "favicon", "profile", "twimg", "badge"]):
+                        comic_images.append(clean)
+
+    # หากมีรูปในเนื้อหามากกว่า 1 รูป รูปแรกมักเป็นหัวเรื่องหมวดหมู่ (이벤트) ให้หยิบรูปเนื้อหาคูปองถัดไป[cite: 58, 60]
+    if len(comic_images) > 1:
+        return comic_images[1]
+    elif len(comic_images) == 1:
+        return comic_images[0]
+
+    # ถ้าในเนื้อหาไม่มี ค่อยหยิบจาก representations
     reps = target_data.get("representations", [])
     for rep in reps:
         if rep.get("representationType") == "IMAGE" and rep.get("path"):
@@ -246,7 +252,6 @@ def send_to_discord_bot(channel_id, payload):
             time.sleep(2)
 
 def send_coupon_to_discord(feed_summary, target_data):
-    """ส่งโพสต์คูปองเป็นการ์ดสรุปสีม่วง รหัสคัดลอกง่าย รูปแบนเนอร์จริง และปุ่มระบบเติมโค้ด"""
     feed_id = str(feed_summary.get("feedId")).strip()
     post_url = f"https://game.naver.com/lounge/Trickcal/board/detail/{feed_id}"
     title = target_data.get("title") or "쿠폰 안내"
@@ -270,7 +275,7 @@ def send_coupon_to_discord(feed_summary, target_data):
         "description": desc,
         "color": 0x9B59B6,  # แถบสีม่วง
         "footer": {
-            "text": f"เคธี่น่ารัก 🍖 | ID: {feed_id}"
+            "text": f"เคธี่น่ารัก 🍖 | ID: {feed_id}"  #[cite: 58]
         }
     }
     if banner_url:
@@ -285,7 +290,7 @@ def send_coupon_to_discord(feed_summary, target_data):
                 "style": 5,
                 "label": "Ingame or Click Here",
                 "url": redeem_url,
-                "emoji": {"name": "🟢"}
+                "emoji": {"name": "🟢"}  #[cite: 58]
             }]
         }]
     }
@@ -299,7 +304,6 @@ def send_lounge_to_discord(feed_summary):
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "공지사항"
     
-    # หากเป็นคูปอง ให้แยกส่งด้วยรูปแบบคูปองเฉพาะ
     if "쿠폰" in title or "COUPON" in title.upper():
         send_coupon_to_discord(feed_summary, target_data)
         return
