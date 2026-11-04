@@ -6,6 +6,7 @@ import time
 import requests
 from datetime import datetime, timezone, timedelta
 
+# รหัสและค่าตั้งค่าช่อง Discord
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CHANNEL_ID_MAIN = os.environ.get("DISCORD_CHANNEL_ID")
 CHANNEL_ID_COUPON = os.environ.get("DISCORD_CHANNEL_ID_COUPON") or CHANNEL_ID_MAIN
@@ -14,17 +15,21 @@ STORAGE_FILE = "last_ids.json"
 TARGET_BOARDS = ["13", "11", "31", "8"]
 
 def load_last_ids():
+    """โหลดประวัติโพสต์ และบังคับแปลงทุก ID ให้เป็นข้อความ (str) ทั้งหมดเพื่อป้องกันบั๊กชนิดข้อมูล"""
     if os.path.exists(STORAGE_FILE):
         try:
             with open(STORAGE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                return [str(x).strip() for x in data if str(x).strip()]
         except Exception:
             return []
     return []
 
 def save_last_ids(data):
+    """บันทึกประวัติโพสต์โดยกรองค่าซ้ำและเก็บเป็น str เสมอ"""
+    clean_data = list(dict.fromkeys([str(x).strip() for x in data if str(x).strip()]))
     with open(STORAGE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(clean_data, f, ensure_ascii=False, indent=2)
 
 def format_thai_time(timestamp_val):
     kst = timezone(timedelta(hours=9))
@@ -224,24 +229,28 @@ def run():
     if not feeds:
         return
 
+    # คัดกรองโพสต์ซ้ำจาก API ให้เหลือรายการเดียว
     unique_feeds = []
     temp_seen = set()
     for f in feeds:
-        fid = str(f.get("feedId"))
+        fid = str(f.get("feedId")).strip()
         if fid not in temp_seen:
             temp_seen.add(fid)
             unique_feeds.append(f)
 
-    # รันรอบแรก บันทึกรายการปัจจุบันทั้งหมดทันที
+    # รอบแรกสุด (ไม่มีประวัติ) ให้จำโพสต์ปัจจุบันทั้งหมดไว้ทันที
     if not seen_ids:
-        all_current = [str(f.get("feedId")) for f in unique_feeds]
+        all_current = [str(f.get("feedId")).strip() for f in unique_feeds]
         save_last_ids(all_current)
         print("Initial run: Saved current history.")
         return
 
+    # ตรวจสอบโหมดทดสอบ
     is_test_mode = "0" in seen_ids
     seen_ids = [x for x in seen_ids if x != "0"]
-    new_posts = [f for f in unique_feeds if str(f.get("feedId")) not in seen_ids]
+
+    # กรองเฉพาะโพสต์ที่ ID ไม่เคยอยู่ใน seen_ids อย่างแม่นยำ
+    new_posts = [f for f in unique_feeds if str(f.get("feedId")).strip() not in seen_ids]
 
     if is_test_mode and new_posts: 
         new_posts = new_posts[:3]
@@ -249,23 +258,26 @@ def run():
     if new_posts:
         posts_to_send = new_posts[:3]
         for post in reversed(posts_to_send): 
-            fid = str(post.get("feedId"))
+            fid = str(post.get("feedId")).strip()
             try:
                 send_lounge_to_discord(post)
+                print(f"Sent post {fid} successfully.", flush=True)
             except Exception as e:
                 print(f"Error sending post {fid}: {e}", flush=True)
             
-            # ส่งเสร็จ 1 โพสต์ บันทึกจำ ID ทันที ป้องกันส่งซ้ำรัวๆ
+            # เมื่อส่งเสร็จ ให้จดจำ ID ทันที
             if fid not in seen_ids:
                 seen_ids.append(fid)
             save_last_ids(seen_ids[-100:])
 
-        # บันทึกโพสต์ที่เหลือทั้งหมดลงหน่วยความจำ
+        # บันทึก ID ทั้งหมดที่ดึงมาได้ในรอบนี้เข้าประวัติ
         for f in unique_feeds:
-            fid = str(f.get("feedId"))
+            fid = str(f.get("feedId")).strip()
             if fid not in seen_ids:
                 seen_ids.append(fid)
         save_last_ids(seen_ids[-100:])
+    else:
+        print("No new posts found.")
 
 if __name__ == "__main__":
     run()
