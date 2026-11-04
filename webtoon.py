@@ -1,11 +1,10 @@
 import os
 import re
-import html
 import json
 import requests
 from datetime import datetime, timezone, timedelta
 
-# ข้อมูลประจำตัวบอทและห้อง Discord สำหรับ Webtoon
+# รหัสบอท และห้อง Discord สำหรับ Webtoon
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1566795322632704143"
 STORAGE_FILE = "last_webtoon_ids.json"
@@ -33,54 +32,28 @@ def format_thai_time(timestamp_val):
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     return f"{dt.day} {thai_months[dt.month-1]} {dt.year} {dt.hour:02d}:{dt.minute:02d} น."
 
-def clean_download_links(text):
-    if not text:
-        return ""
-    lines = text.split("\n")
-    cleaned = []
-    for line in lines:
-        l_str = line.strip()
-        if any(store in l_str for store in ["Google Play", "App Store", "원스토어"]):
-            continue
-        if "다운로드" in l_str and "바로" in l_str:
-            continue
-        cleaned.append(line)
-    return "\n".join(cleaned).strip()
-
 def clean_image_url(url):
-    """ตัด ?type=... ด้านหลังออกเพื่อให้เป็นนามสกุล .gif แท้ๆ ช่วยให้ GIF เล่นบนมือถือได้"""
+    """ตัด ?type=... ด้านหลังทิ้ง เพื่อให้ได้ไฟล์ภาพต้นฉบับแท้ๆ ช่วยให้ GIF ขยับบนมือถือได้"""
     if not url: return None
     return url.split("?")[0]
 
-def parse_html_to_sections(raw_html):
+def extract_comic_images(raw_html):
+    """ดึงเฉพาะ URL รูปภาพการ์ตูนทั้งหมดออกมา โดยไม่เอาข้อความเลย"""
     if not raw_html: return []
-    def img_replacer(match):
-        tag = match.group(0)
+    img_tags = re.findall(r'<img[^>]+>', raw_html, flags=re.IGNORECASE)
+    images = []
+    seen = set()
+    for tag in img_tags:
         m = re.search(r'(?:src|data-src|data-original)=["\']([^"\']+)["\']', tag, re.IGNORECASE)
         if m:
             img_url = m.group(1).strip()
             if img_url.startswith("//"): img_url = "https:" + img_url
             if img_url.startswith("http"):
-                img_url = clean_image_url(img_url)
-                return f"[[IMG_TOKEN:{img_url}]]"
-        return ""
-    text = re.sub(r'<img[^>]+>', img_replacer, raw_html, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/(?:p|div|h[1-6]|tr|li|ul|ol)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*/(?:td|th)\s*>', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = html.unescape(text).replace("\xa0", " ").replace("\u200b", "")
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', text).strip()
-
-    tokens = re.split(r'\[\[IMG_TOKEN:(https?://[^\]]+)\]\]', text)
-    sections = []
-    for i in range(0, len(tokens), 2):
-        txt = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', tokens[i].strip())
-        txt = clean_download_links(txt)
-        img = tokens[i+1].strip() if i+1 < len(tokens) else None
-        if txt or img: sections.append({"text": txt, "image": img})
-    return sections
+                clean_url = clean_image_url(img_url)
+                if clean_url and clean_url not in seen:
+                    seen.add(clean_url)
+                    images.append(clean_url)
+    return images
 
 def fetch_feed_detail(feed_id):
     url = f"https://comm-api.game.naver.com/nng_main/v1/community/lounge/Trickcal/feed/{feed_id}"
@@ -130,7 +103,7 @@ def send_webtoon_to_discord(feed_summary):
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = clean_image_url(next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None))
 
-    # 1. การ์ดหัวข้อและปุ่มเปิดดูต้นฉบับ
+    # 1. การ์ดหัวข้อหลัก
     header_embed = {
         "title": "트릭컬 리바이브 - 웹툰 (Webtoon)", 
         "url": post_url,
@@ -140,57 +113,31 @@ def send_webtoon_to_discord(feed_summary):
     if thumb_url: 
         header_embed["thumbnail"] = {"url": thumb_url}
 
-    # 2. แยกข้อความและจับคู่รูปภาพทีละ 2 รูป
-    sections = parse_html_to_sections(raw_contents)
-    content_embeds = []
+    # 2. ดึงรูปภาพทั้งหมด (ไม่เอาข้อความเลย และไม่ผูก URL เพื่อป้องกัน Discord บีบภาพ)
+    images = extract_comic_images(raw_contents)
+    image_embeds = []
     
-    all_images = []
-    for sec in sections:
-        sec_text = sec["text"][:1900].rstrip() + "..." if len(sec["text"]) > 1900 else sec["text"]
-        if sec_text:
-            content_embeds.append({
-                "description": sec_text,
-                "color": color
-            })
-        if sec.get("image"):
-            all_images.append(sec["image"])
+    for img_url in images:
+        image_embeds.append({
+            "image": {"url": img_url},
+            "color": color
+        })
 
-    # วนลูปจับคู่รูปภาพทีละ 2 รูป (Pair Grid)
-    pair_index = 0
-    for i in range(0, len(all_images), 2):
-        pair = all_images[i:i+2]
-        pair_url = f"{post_url}#gallery-{pair_index}"
-        pair_index += 1
-
-        for img_url in pair:
-            content_embeds.append({
-                "image": {"url": img_url},
-                "color": color,
-                "url": pair_url
-            })
-
-    if len(content_embeds) > 24:
-        content_embeds = content_embeds[:24]
-        content_embeds.append({"description": "[ เนื้อหายาวเกินไป สามารถอ่านต่อได้ในลิงก์หลัก ]", "color": color})
-
-    # 3. รวมหัวข้อกับเนื้อหาเข้าด้วยกันเป็นก้อนเดียว
+    # 3. จัดกลุ่มส่ง (ข้อความละไม่เกิน 10 Embeds ตามกฎ Discord)
     batches = []
     current_batch = [header_embed]
-    current_char_count = len(header_embed.get("title", "")) + len(header_embed.get("description", ""))
 
-    for emb in content_embeds:
-        desc_len = len(emb.get("description") or "")
-        if len(current_batch) >= 10 or (current_char_count + desc_len > 5000 and current_batch):
+    for emb in image_embeds:
+        if len(current_batch) >= 10:
             batches.append(current_batch)
             current_batch = [emb]
-            current_char_count = desc_len
         else:
             current_batch.append(emb)
-            current_char_count += desc_len
 
     if current_batch:
         batches.append(current_batch)
 
+    # ปุ่มกดไปอ่านที่หน้าเว็บต้นฉบับ
     components = [{
         "type": 1,
         "components": [{
