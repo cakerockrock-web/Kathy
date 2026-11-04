@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 
 # ดึงรหัสบอท และตั้งค่าห้อง Discord สำหรับ Webtoon ไว้ที่ 1440393996739547310
 BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1440393996739547310"
+CHANNEL_ID_WEBTOON = os.environ.get("DISCORD_CHANNEL_ID_WEBTOON") or "1566795322632704143"
 STORAGE_FILE = "last_webtoon_ids.json"
 TARGET_BOARD_ID = "6"
 
@@ -33,6 +33,21 @@ def format_thai_time(timestamp_val):
     thai_months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
     return f"{dt.day} {thai_months[dt.month-1]} {dt.year} {dt.hour:02d}:{dt.minute:02d} น."
 
+def clean_download_links(text):
+    if not text:
+        return ""
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        l_str = line.strip()
+        # กรองบรรทัดลิงก์ดาวน์โหลดสโตร์ทิ้งทั้งหมด
+        if any(store in l_str for store in ["Google Play", "App Store", "원스토어"]):
+            continue
+        if "다운로드" in l_str and "바로" in l_str:
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
 def parse_html_to_sections(raw_html):
     if not raw_html: return []
     def img_replacer(match):
@@ -56,6 +71,7 @@ def parse_html_to_sections(raw_html):
     sections = []
     for i in range(0, len(tokens), 2):
         txt = re.sub(r'\n[ \t]*\n[ \t\n]*', '\n\n', tokens[i].strip())
+        txt = clean_download_links(txt)  # กรองข้อความลิงก์โหลดเกมทิ้ง
         img = tokens[i+1].strip() if i+1 < len(tokens) else None
         if txt or img: sections.append({"text": txt, "image": img})
     return sections
@@ -103,12 +119,12 @@ def send_webtoon_to_discord(feed_summary):
     target_data = fetch_feed_detail(feed_id) or feed_summary
     title = target_data.get("title") or "웹툰"
     raw_contents = target_data.get("contents") or ""
-    color = 0x2ECC71  # กรอบสีเขียว Webtoon
+    color = 0x2ECC71  # สีเขียว Webtoon
     
     date_str = format_thai_time(target_data.get("writtenAt") or target_data.get("createdAt") or target_data.get("timestamp"))
     thumb_url = next((rep.get("path") for rep in target_data.get("representations", []) if rep.get("representationType") == "IMAGE" and rep.get("path")), None)
 
-    # 1. ส่งการ์ดหัวข้อและปุ่มกดไปอ่าน
+    # 1. การ์ดหัวข้อและปุ่มลิงก์
     header_embed = {
         "title": "트릭컬 리바이브 - 웹툰 (Webtoon)", 
         "description": f"**{title}**\n{date_str}   |   ID: {feed_id}", 
@@ -127,7 +143,7 @@ def send_webtoon_to_discord(feed_summary):
     }
     send_to_discord_bot(payload_header)
 
-    # 2. ส่งรูปภาพและเนื้อเรื่อง (ป้องกันตัวอักษรเกินลิมิต Discord)
+    # 2. รูปภาพการ์ตูน
     sections = parse_html_to_sections(raw_contents)
     content_embeds = []
     
@@ -180,7 +196,6 @@ def run():
             temp_seen.add(fid)
             unique_feeds.append(f)
 
-    # รอบแรกจำโพสต์ปัจจุบันไว้ก่อนเพื่อไม่ให้ส่งสแปม
     if not seen_ids:
         save_last_ids([str(f.get("feedId")) for f in unique_feeds])
         print("Initial run: Saved current Webtoon history.")
@@ -189,12 +204,10 @@ def run():
     is_test_mode = "0" in seen_ids
     new_posts = [f for f in unique_feeds if str(f.get("feedId")) not in seen_ids]
 
-    # โหมดทดสอบ (ดึงไม่เกิน 3 ตอน)
     if is_test_mode and new_posts: 
         new_posts = new_posts[:3]
         seen_ids = [x for x in seen_ids if x != "0"]
 
-    # โหมดรันจริง (ล็อกไว้ให้ส่งไม่เกิน 3 ตอนต่อรอบ)
     if new_posts:
         posts_to_send = new_posts[:3]
         for post in reversed(posts_to_send): 
