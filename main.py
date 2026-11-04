@@ -1,3 +1,17 @@
+◈ 쿠폰 코드 ◈
+포브스선정프리미엄브랜드대상1위트릭컬리바이브지금당장쿠폰입력여기까지붙여넣기
+```
+
+สาเหตุที่โค้ดหาไม่เจอในรอบที่แล้ว เพราะมีสัญลักษณ์เพชร (`◈`) ประกบหัวท้าย ทำให้ตัวตรวจจับเดิมมองข้ามไปครับ
+
+---
+
+### จุดแก้ไขใน `extract_coupon_details`
+เพิ่มตัวตรวจจับหัวข้อแบบมีสัญลักษณ์พิเศษ (`◈`, `◆`, `◇`, `■`, `▶`) โดยตัดสัญลักษณ์ตกแต่งออกให้เหลือคำเพียวๆ ว่า **`쿠폰코드`** แล้วสั่งให้ **ดึงข้อความในบรรทัดถัดไปมาเป็นรหัสคูปองทันที**[cite: 62]
+
+นำโค้ดด้านล่างนี้ไปวางทับในไฟล์ **`main.py`** ทั้งหมดได้เลยครับ:
+
+```python
 import os
 import re
 import html
@@ -126,7 +140,7 @@ def is_valid_coupon_code(code_str):
     bad_chars = ['?', '!', ',', '.', '~', '"', "'", '(', ')']
     if any(c in code_str for c in bad_chars):
         return False
-    bad_words = ["감사", "마음", "뜻으로", "받아", "주세요", "길어졌지만", "안내", "확인", "아래", "다음", "사항", "유의"]
+    bad_words = ["감사", "마음", "뜻으로", "받아", "주세요", "길어졌지만", "안내", "확인", "아래", "다음", "사항", "유의", "보상"]
     if any(w in code_str for w in bad_words):
         return False
     if len(code_str.strip()) < 4:
@@ -134,65 +148,11 @@ def is_valid_coupon_code(code_str):
     return True
 
 def extract_coupon_details(raw_html):
-    """แกะรหัสคูปองและระยะเวลาการใช้งาน รองรับตารางทั้งแนวนอนและแนวตั้งอย่างแม่นยำ"""
+    """แกะรหัสคูปองและระยะเวลาการใช้งานจากทั้งบรรทัดเพชร ◈ และตารางอย่างแม่นยำ"""
     coupon_code = None
     claim_period = None
 
-    # 1. วิเคราะห์จากตาราง HTML (SmartEditor Table)
-    tables = re.findall(r'<table[^>]*>(.*?)</table>', raw_html, flags=re.DOTALL | re.IGNORECASE)
-    for tbl in tables:
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', tbl, flags=re.DOTALL | re.IGNORECASE)
-        grid = []
-        for r in rows:
-            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', r, flags=re.DOTALL | re.IGNORECASE)
-            clean_row = [html.unescape(re.sub(r'<[^>]+>', '', c)).replace('\xa0', ' ').strip() for c in cells]
-            if any(clean_row):
-                grid.append(clean_row)
-
-        if not grid:
-            continue
-
-        # 1.1 ตรวจสอบแบบแนวนอน (Horizontal Table: แถวที่ 0 เป็นหัวตาราง, แถวที่ 1 เป็นค่าจริง)
-        header_row = [c.replace(' ', '') for c in grid[0]]
-        code_col_idx = None
-        period_col_idx = None
-
-        for col_idx, h_text in enumerate(header_row):
-            if any(k in h_text for k in ["쿠폰번호", "쿠폰코드", "쿠폰명", "코드"]):
-                code_col_idx = col_idx
-            elif any(k in h_text for k in ["사용기간", "입력기간", "쿠폰기간", "기간"]):
-                period_col_idx = col_idx
-
-        if code_col_idx is not None and len(grid) > 1:
-            for r_idx in range(1, len(grid)):
-                if code_col_idx < len(grid[r_idx]):
-                    val = grid[r_idx][code_col_idx].strip()
-                    if is_valid_coupon_code(val):
-                        coupon_code = val
-                        break
-
-        if period_col_idx is not None and len(grid) > 1:
-            for r_idx in range(1, len(grid)):
-                if period_col_idx < len(grid[r_idx]):
-                    val = grid[r_idx][period_col_idx].strip()
-                    if val:
-                        claim_period = val
-                        break
-
-        # 1.2 ตรวจสอบแบบแนวตั้ง (Vertical Table: คอลัมน์ 0 เป็นหัวข้อ, คอลัมน์ 1 เป็นค่าจริง)
-        for r in grid:
-            if len(r) >= 2:
-                col0 = r[0].replace(' ', '')
-                col1 = r[1].strip()
-                if not coupon_code and any(k == col0 for k in ["쿠폰번호", "쿠폰코드", "쿠폰명"]) and is_valid_coupon_code(col1):
-                    coupon_code = col1
-                elif not claim_period and any(k in col0 for k in ["사용기간", "입력기간", "쿠폰기간", "기간"]) and len(col0) <= 6:
-                    claim_period = col1
-
-        if coupon_code and claim_period:
-            break
-
-    # 2. ค้นหาจากข้อความทีละบรรทัด (หากไม่ได้อยู่ในตาราง)
+    # แปลง HTML เป็นข้อความแยกทีละบรรทัด
     text = re.sub(r'<\s*br\s*/?>', '\n', raw_html, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/(?:p|div|tr|li|h[1-6])\s*>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'<\s*/(?:td|th)\s*>', ' | ', text, flags=re.IGNORECASE)
@@ -201,30 +161,50 @@ def extract_coupon_details(raw_html):
     lines = [l.strip() for l in text.split('\n') if l.strip()]
 
     for idx, line in enumerate(lines):
-        clean_l = re.sub(r'^[■※•\*\-\s\[\(]+', '', line).strip()
-        clean_l = re.sub(r'[\]\)\:\s]+$', '', clean_l).strip()
+        # ตัดอักขระพิเศษ สัญลักษณ์เพชร ◈◆◇ และช่องว่างออกทั้งหมดเพื่อเช็กคำหลัก
+        pure_korean = re.sub(r'[^가-힣a-zA-Z0-9]', '', line)
 
-        if not coupon_code:
-            m = re.search(r'(?:쿠폰\s*번호|쿠폰\s*코드|쿠폰명)\s*[:：\|]\s*([^\n\r\|]+)', line)
+        # ตรวจจับหัวข้อ "쿠폰코드" / "쿠폰번호" / "쿠폰명" (เช่น ◈ 쿠폰 코드 ◈)
+        if pure_korean in ["쿠폰코드", "쿠폰번호", "쿠폰명", "코드"]:
+            # ดึงบรรทัดถัดไปทันที
+            if idx + 1 < len(lines):
+                cand = lines[idx + 1].strip()
+                cand_clean = re.sub(r'^[◈◆◇■▶※\:\=\|\-\s\[\]\(\)]+', '', cand)
+                cand_clean = re.sub(r'[◈◆◇■▶※\:\=\|\-\s\[\]\(\)]+$', '', cand_clean).strip()
+                if is_valid_coupon_code(cand_clean):
+                    coupon_code = cand_clean
+
+        # ตรวจจับกรณีที่รหัสอยู่ในบรรทัดเดียวกันโดยมีเครื่องหมายคั่น
+        elif not coupon_code and any(k in pure_korean for k in ["쿠폰코드", "쿠폰번호"]):
+            m = re.search(r'(?:쿠폰\s*코드|쿠폰\s*번호|쿠폰명)\s*[◈◆◇■▶※\:\=\|\-\s]*[:：\|]\s*([^\n\r\|◈◆◇]+)', line)
             if m:
                 cand = m.group(1).strip()
                 if is_valid_coupon_code(cand):
                     coupon_code = cand
-            elif clean_l in ["쿠폰 번호", "쿠폰번호", "쿠폰 코드", "쿠폰코드", "쿠폰명"]:
-                for step in range(1, 4):
-                    if idx + step < len(lines):
-                        cand = lines[idx + step].strip().lstrip('|:- ').strip()
-                        if is_valid_coupon_code(cand):
-                            coupon_code = cand
-                            break
 
-        if not claim_period:
-            if any(k in line for k in ["사용 기간", "사용기간", "입력 기간", "입력기간", "쿠폰 기간"]):
-                m_p = re.search(r'(?:사용\s*기간|입력\s*기간|쿠폰\s*기간)\s*[:：\|]\s*([^\n\r]+)', line)
-                if m_p:
-                    claim_period = m_p.group(1).strip()
-                elif idx + 1 < len(lines):
-                    claim_period = lines[idx + 1].strip().lstrip('|:- ').strip()
+        # ตรวจจับระยะเวลาการใช้งาน
+        if not claim_period and any(k in pure_korean for k in ["사용기간", "입력기간", "쿠폰기간"]):
+            m_p = re.search(r'(?:사용\s*기간|입력\s*기간|쿠폰\s*기간)\s*[◈◆◇■▶※\:\=\|\-\s]*[:：\|]?\s*([^\n\r]+)', line)
+            if m_p and "~" in m_p.group(1):
+                claim_period = m_p.group(1).strip()
+            elif idx + 1 < len(lines):
+                cand_p = lines[idx + 1].strip().lstrip('|:- ').strip()
+                if "~" in cand_p:
+                    claim_period = cand_p
+
+    # Fallback ถ้าเป็นตาราง HTML
+    if not coupon_code:
+        for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', raw_html, flags=re.DOTALL | re.IGNORECASE):
+            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, flags=re.DOTALL | re.IGNORECASE)
+            clean_cells = [html.unescape(re.sub(r'<[^>]+>', '', c)).replace('\xa0', ' ').strip() for c in cells]
+            clean_cells = [c for c in clean_cells if c]
+            if len(clean_cells) >= 2:
+                col0 = re.sub(r'[^가-힣a-zA-Z0-9]', '', clean_cells[0])
+                col1 = clean_cells[1].strip()
+                if col0 in ["쿠폰번호", "쿠폰코드", "쿠폰명"] and is_valid_coupon_code(col1):
+                    coupon_code = col1
+                if col0 in ["사용기간", "입력기간", "쿠폰기간"] and not claim_period:
+                    claim_period = col1
 
     # Fallback สำหรับหาระยะเวลา (หาช่วงวันที่ที่มีเครื่องหมาย ~)
     if not claim_period:
