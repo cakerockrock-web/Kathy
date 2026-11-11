@@ -134,7 +134,7 @@ def is_valid_coupon_code(code_str):
     return True
 
 def extract_coupon_details(raw_html):
-    """แกะรหัสคูปองและระยะเวลาการใช้งานจากทั้งบรรทัดเพชร ◈ และตารางอย่างแม่นยำ"""
+    """แกะรหัสคูปองและระยะเวลาการใช้งาน รองรับหัวข้อที่มีวงเล็บ และรหัสที่อยู่บรรทัดถัดไป"""
     coupon_code = None
     claim_period = None
 
@@ -146,26 +146,26 @@ def extract_coupon_details(raw_html):
     lines = [l.strip() for l in text.split('\n') if l.strip()]
 
     for idx, line in enumerate(lines):
-        pure_korean = re.sub(r'[^가-힣a-zA-Z0-9]', '', line)
+        # 1. ตรวจจับหัวข้อคูปอง (รวมถึงกรณีมีวงเล็บกำกับ เช่น 쿠폰 코드(대소문자를 구분합니다))
+        if re.search(r'쿠폰\s*(?:코드|번호|명)', line):
+            # 1.1 ถ้ามีรหัสอยู่ในบรรทัดเดียวกัน
+            m_same = re.search(r'(?:쿠폰\s*(?:코드|번호|명)[^\w]*)(?:대소문자[^\)]*\))?\s*[:：\-]?\s*([A-Za-z0-9_\-]{4,30})', line)
+            if m_same and is_valid_coupon_code(m_same.group(1)):
+                coupon_code = m_same.group(1).strip()
 
-        # ตรวจจับหัวข้อ 쿠폰코드 / 쿠폰번호 จากหัวข้อเพชร
-        if pure_korean in ["쿠폰코드", "쿠폰번호", "쿠폰명", "코드"]:
-            if idx + 1 < len(lines):
-                cand = lines[idx + 1].strip()
-                cand_clean = re.sub(r'^[◈◆◇■▶※\:\=\|\-\s\[\]\(\)]+', '', cand)
-                cand_clean = re.sub(r'[◈◆◇■▶※\:\=\|\-\s\[\]\(\)]+$', '', cand_clean).strip()
-                if is_valid_coupon_code(cand_clean):
-                    coupon_code = cand_clean
+            # 1.2 ถ้ารหัสอยู่บรรทัดถัดไป (เช่น 11DUDUGIFT11)
+            if not coupon_code:
+                for next_offset in [1, 2]:
+                    if idx + next_offset < len(lines):
+                        cand = lines[idx + next_offset].strip()
+                        cand_clean = re.sub(r'^[◈◆◇■▶※\:\=\|\-\s\[\]\(\)]+', '', cand)
+                        cand_clean = re.sub(r'[◈◆◇■▶※\:\=\|\-\s\[\]\(\)]+$', '', cand_clean).strip()
+                        if re.match(r'^[A-Za-z0-9_\-]{4,30}$', cand_clean) and is_valid_coupon_code(cand_clean):
+                            coupon_code = cand_clean
+                            break
 
-        elif not coupon_code and any(k in pure_korean for k in ["쿠폰코드", "쿠폰번호"]):
-            m = re.search(r'(?:쿠폰\s*코드|쿠폰\s*번호|쿠폰명)\s*[◈◆◇■▶※\:\=\|\-\s]*[:：\|]\s*([^\n\r\|◈◆◇]+)', line)
-            if m:
-                cand = m.group(1).strip()
-                if is_valid_coupon_code(cand):
-                    coupon_code = cand
-
-        # ตรวจจับระยะเวลาการใช้งาน
-        if not claim_period and any(k in pure_korean for k in ["사용기간", "입력기간", "쿠폰기간"]):
+        # 2. ตรวจจับระยะเวลาการใช้งาน
+        if not claim_period and any(k in line for k in ["사용기간", "입력기간", "쿠폰기간", "사용 기간", "입력 기간"]):
             m_p = re.search(r'(?:사용\s*기간|입력\s*기간|쿠폰\s*기간)\s*[◈◆◇■▶※\:\=\|\-\s]*[:：\|]?\s*([^\n\r]+)', line)
             if m_p and "~" in m_p.group(1):
                 claim_period = m_p.group(1).strip()
@@ -174,8 +174,8 @@ def extract_coupon_details(raw_html):
                 if "~" in cand_p:
                     claim_period = cand_p
 
-    # Fallback ถ้าอยู่ในตาราง HTML
-    if not coupon_code:
+    # 3. Fallback: กรณีข้อมูลอยู่ในตาราง HTML
+    if not coupon_code or not claim_period:
         for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', raw_html, flags=re.DOTALL | re.IGNORECASE):
             cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, flags=re.DOTALL | re.IGNORECASE)
             clean_cells = [html.unescape(re.sub(r'<[^>]+>', '', c)).replace('\xa0', ' ').strip() for c in cells]
@@ -183,11 +183,13 @@ def extract_coupon_details(raw_html):
             if len(clean_cells) >= 2:
                 col0 = re.sub(r'[^가-힣a-zA-Z0-9]', '', clean_cells[0])
                 col1 = clean_cells[1].strip()
-                if col0 in ["쿠폰번호", "쿠폰코드", "쿠폰명"] and is_valid_coupon_code(col1):
-                    coupon_code = col1
-                if col0 in ["사용기간", "입력기간", "쿠폰기간"] and not claim_period:
+                if any(k in col0 for k in ["쿠폰번호", "쿠폰코드", "쿠폰명"]) and is_valid_coupon_code(col1):
+                    if not coupon_code:
+                        coupon_code = col1
+                if any(k in col0 for k in ["사용기간", "입력기간", "쿠폰기간"]) and not claim_period:
                     claim_period = col1
 
+    # ดักจับช่วงวันที่ถ้ายังหาไม่เจอ
     if not claim_period:
         m_date = re.search(r'(\d+월\s*\d+일[^\n\r~]+~[^\n\r]+)', text)
         if m_date:
@@ -315,7 +317,7 @@ def send_coupon_to_discord(feed_summary, target_data):
             "components": [{
                 "type": 2,
                 "style": 5,
-                "label": "Ingame or Click Here",
+                "label": "กรอกในเกมหรือผ่านเว็ปที่นี่",
                 "url": redeem_url,
                 "emoji": {"name": "🟢"}
             }]
